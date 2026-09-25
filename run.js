@@ -107,6 +107,26 @@ function tsCompact(d = new Date()) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
 }
 
+// 读取历史记录: 优先 history.json; 若损坏/缺失则从 results.jsonl 重建 (自愈)
+function loadHistory() {
+  try {
+    const h = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+    if (Array.isArray(h) && h.length) return h;
+  } catch { }
+  try {
+    const lines = fs.readFileSync(JSONL_FILE, 'utf8').split(/\r?\n/).filter(Boolean);
+    const arr = [];
+    for (const l of lines) {
+      try { arr.push(JSON.parse(l.replace(/^\uFEFF/, ''))); } catch { } // 容忍 BOM
+    }
+    if (arr.length) {
+      console.log(`  ℹ history.json 不可用, 已从 results.jsonl 重建 ${arr.length} 条记录`);
+      return arr;
+    }
+  } catch { }
+  return [];
+}
+
 // ---------- 单局结果保存 (数据 + 结束截图) ----------
 // 命名规则: <分数>_<时间点>.png  例: 386636_2026-09-25_18-30-45.png
 let lastSavedGameId = null;
@@ -155,11 +175,9 @@ async function saveGameResult(page, result, gameNo, label = 'gameover') {
 
   // 1) 追加 JSONL (每行一条, 方便后续分析)
   try { fs.appendFileSync(JSONL_FILE, JSON.stringify(record) + '\n'); } catch (e) { console.log('  ⚠ JSONL 写入失败: ' + e.message); }
-  // 2) 维护 history.json (数组形式)
+  // 2) 维护 history.json (数组形式; 若损坏会自动从 jsonl 重建)
   try {
-    let hist = [];
-    try { hist = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8')); } catch { }
-    if (!Array.isArray(hist)) hist = [];
+    const hist = loadHistory();
     hist.push(record);
     fs.writeFileSync(HISTORY_FILE, JSON.stringify(hist, null, 2));
   } catch (e) { console.log('  ⚠ history 写入失败: ' + e.message); }
