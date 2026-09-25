@@ -91,12 +91,18 @@
 
 直接**双击 `start.bat`**，它会自动完成：
 
-1. 检查 Node.js，缺失则用 `winget` 自动安装（无 winget 时给出下载链接）
+1. 检查 Node.js，缺失则用 `winget` 自动安装到 **`D:\Program_software\nodejs`**（无 winget 时给出下载链接）
 2. 检查 npm
-3. 检查 Google Chrome，缺失则自动安装（脚本用系统 Chrome，无需下载浏览器内核）
+3. 检查 Google Chrome（脚本用系统 Chrome，无需下载浏览器内核）
 4. 安装 Node 依赖（使用项目内 `.npm-cache`，避开系统缓存权限问题）
 5. 清理上次残留的自动化 Chrome 窗口（只清理本项目的，不影响你自己的浏览器）
 6. 启动游戏
+
+> **工具安装目录**：脚本统一把工具装到 `D:\Program_software\<工具名>`（会自动创建该目录），
+> 并优先复用该目录下已有的 Node.js，因此现有环境无需重装。
+> 唯一例外是 Google Chrome —— 官方安装程序不支持自定义路径，只能装在 `C:\Program Files`。
+>
+> 该目录可通过脚本顶部的 `TOOLS_DIR` 变量改成你想要的位置。
 
 ```bat
 start.bat                          REM 默认启动
