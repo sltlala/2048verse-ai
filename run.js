@@ -281,10 +281,15 @@ const HUD_HTML = `
 async function injectHUD(page) {
   return !!(await safeEval(page, (html) => {
     if (!document.querySelector('#board-4x4')) return false; // 只在游戏页注入
-    document.getElementById('dsh-hud')?.remove();
+    const old = document.getElementById('dsh-hud');
+    if (old) old.remove();
     const container = document.createElement('div');
     container.innerHTML = html;
-    document.body.appendChild(container.firstChild);
+    // 注意: 必须用 firstElementChild —— 模板字符串开头的换行会让 firstChild 取到文本节点,
+    // 那样 appendChild 插进去的只是空白, HUD 不会显示 (曾经的 bug)
+    const el = container.firstElementChild;
+    if (!el) return false;
+    document.body.appendChild(el);
     return true;
   }, HUD_HTML));
 }
@@ -462,7 +467,10 @@ async function playOneGame(page, gameNo, stats) {
     }
 
     if (awayLogged) {
-      if (!state.hudAlive) await injectHUD(page);
+      if (!state.hudAlive) {
+        const ok = await injectHUD(page);
+        console.log(ok ? '  🎛  HUD 已重新注入' : '  ⚠  HUD 重注入失败');
+      }
       console.log('  ▶ 页面已回到游戏, 继续对局');
       awayLogged = false;
     }
@@ -742,8 +750,9 @@ function scheduleSelfTestNav(page) {
     await page.waitForSelector('#board-4x4', { timeout: 15000 }).catch(() => { });
   }
 
-  // 注入 HUD
-  await injectHUD(page);
+  // 注入 HUD (页面右上角可视化面板)
+  if (await injectHUD(page)) console.log('🎛  HUD 已注入 (页面右上角, 显示得分/决策/深度/速度/小地图)');
+  else console.log('⚠  HUD 注入失败 (页面可能未就绪, 游戏循环中会自动重试)');
   const stats = loadStats();
   console.log(`\n历史最佳: ${fmt(stats.bestScore)} (共 ${stats.games} 局)\n`);
 
