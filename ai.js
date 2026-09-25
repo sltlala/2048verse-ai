@@ -576,8 +576,8 @@ function playerNode(rows, depth, cprob) {
     rows[0] = s0; rows[1] = s1; rows[2] = s2; rows[3] = s3; // 回滚
   }
   if (best === -Infinity) {
-    // 死局: 用极大惩罚, 避免它被随机节点的平均稀释掉
-    return -DEATH_PENALTY; // 死局
+    // 死局: DEATH_PENALTY>0 时用固定惩罚 (实验特性); 否则用旧行为
+    return DEATH_PENALTY > 0 ? -DEATH_PENALTY : (evaluateInPlace(rows) - W_LOST_PENALTY * 4);
   }
   return best;
 }
@@ -601,14 +601,27 @@ function adaptiveBudget(emptyCount, maxBudget) {
 }
 
 // ---------- 后期(关键期)专项优化参数 ----------
-// 依据: 实测在 32768 阶段崩盘于"满盘无合并", 终局阶梯碎裂。
-// 三个弱点: (1) 死局惩罚被随机节点平均稀释 (2) 启发式只约束单行/单列单调性,
-//          无法阻止整体阶梯碎裂 (3) 关键期用期望值, 会被小概率灭团稀释
-let DEATH_PENALTY = 1e9;            // 死局惩罚 (远大于任何局面分差)
-let RISK_AVERSION = 0.5;            // 关键期: 最坏情况的权重 (0=纯期望)
+// 【默认全部关闭】 —— 40 局对照实验(固定深度4)显示与旧行为无显著差异:
+//   OFF: 均值 112,658 ±10,864  中位 134,136  最低 27,164
+//   ON : 均值 118,786 ±9,574   中位 132,240  最低 56,712
+// 且大死局惩罚存在"值饱和"风险: 关键期多个招式都含致死分支时,
+// 平均后全部趋近同一个巨大负值 → 招式间差异被抹平 → 关键期等于随机选。
+// 因此默认沿用旧行为(已验证能跑到 669,900/32768), 新特性用 --endgame on 开启。
+let DEATH_PENALTY = 0;              // 0 = 旧行为 (eval - 4*W_LOST_PENALTY); >0 = 固定惩罚
+let RISK_AVERSION = 0;              // 关键期最坏情况权重 (0=纯期望)
 let RISK_MAX_EMPTY = 2;             // 空格数 <= 此值时启用风险厌恶
-let ENDGAME_SNAKE_W = 0.35;         // 后期蛇形结构项权重 (0=关闭)
+let ENDGAME_SNAKE_W = 0;            // 后期蛇形结构项权重 (0=关闭)
 let ENDGAME_SNAKE_MAX_EMPTY = 4;    // 空格数 <= 此值时启用蛇形项
+
+// 后期优化预设: 'off' = 旧行为(默认) | 'on' = 实验特性
+function setEndgameMode(mode) {
+  if (mode === 'on') {
+    DEATH_PENALTY = 1e9; RISK_AVERSION = 0.5; ENDGAME_SNAKE_W = 0.35;
+  } else {
+    DEATH_PENALTY = 0; RISK_AVERSION = 0; ENDGAME_SNAKE_W = 0;
+  }
+  return { deathPenalty: DEATH_PENALTY, riskAversion: RISK_AVERSION, endgameSnakeW: ENDGAME_SNAKE_W };
+}
 
 // ---------- 对外主接口 ----------
 // values: 16 个数值的数组 (行优先), budgetMs: 每步时间预算 (默认 60ms)
@@ -729,5 +742,5 @@ module.exports = {
   getBestMove, simulateMove, simulateSpawn,
   valuesToBoard, boardToValues, applyMoveDir, evaluate,
   moveInPlace, evaluateInPlace,
-  setFourRate, getFourRate, configure, adaptiveBudget,
+  setFourRate, getFourRate, configure, adaptiveBudget, setEndgameMode,
 };

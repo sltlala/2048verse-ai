@@ -28,7 +28,7 @@ const ai = require('./ai');
 
 // ---------- 命令行参数 ----------
 function parseArgs() {
-  const args = { games: Infinity, speed: 30, newgame: false, profile: '.chrome-profile', guest: false, budget: 150, p4: 10, depth: 0, snake: 0, noAdaptive: false, windowSize: 'none', headless: false, browser: 'auto', webhook: null, session: null, exportSession: null };
+  const args = { games: Infinity, speed: 30, newgame: false, profile: '.chrome-profile', guest: false, budget: 150, p4: 10, depth: 0, snake: 0, noAdaptive: false, windowSize: 'none', headless: false, browser: 'auto', webhook: null, session: null, exportSession: null, endgame: 'default' };
   const raw = process.argv.slice(2);
   for (let i = 0; i < raw.length; i++) {
     if (raw[i] === '--games') args.games = parseInt(raw[++i], 10);
@@ -47,6 +47,7 @@ function parseArgs() {
     else if (raw[i] === '--webhook') args.webhook = raw[++i];    // 每局结束后 POST 结果到该 URL
     else if (raw[i] === '--session') args.session = raw[++i];    // 从文件导入登录会话 (服务器部署)
     else if (raw[i] === '--export-session') args.exportSession = raw[++i]; // 导出当前登录会话到文件
+    else if (raw[i] === '--endgame') args.endgame = raw[++i];    // 后期专项优化: on | off
     else if (raw[i] === '--selftest-nav') args.selftestNav = true; // 内部测试: 模拟登录跳转
   }
   return args;
@@ -809,6 +810,14 @@ function scheduleSelfTestNav(page) {
   console.log('  2048verse 4x4 AI 自动刷分 (Expectimax)');
   console.log(`  局数: ${ARGS.games === Infinity ? '无限 (Ctrl+C 停止)' : ARGS.games} | 步延迟: ${ARGS.speed}ms | 决策预算: ${ARGS.budget}ms | 生成4概率: ${ARGS.p4}%`);
   ai.setFourRate(ARGS.p4);
+  // 后期专项优化开关 (默认关闭 = 已验证的旧行为)
+  if (ARGS.endgame === 'off') {
+    ai.setEndgameMode('off');
+    console.log('  后期优化: 关闭 (默认, 已验证行为)');
+  } else if (ARGS.endgame === 'on') {
+    ai.setEndgameMode('on');
+    console.log('  后期优化: 开启 (实验特性: 大死局惩罚 + 风险厌恶 + 蛇形项)');
+  }
   if (ARGS.depth > 0 || ARGS.snake > 0) {
     ai.configure({ fixedDepth: ARGS.depth, snakeWeight: ARGS.snake });
     console.log(`  引擎: 固定深度 ${ARGS.depth || '自适应'} | 蛇形权重 ${ARGS.snake}`);

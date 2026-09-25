@@ -20,8 +20,13 @@ const STRICT = args.includes('--strict-merges');
 const depthArg = args.find(a => a.startsWith('--depth='));
 const FIXED_DEPTH = depthArg ? parseInt(depthArg.split('=')[1], 10) : 0;
 const ADAPTIVE = args.includes('--adaptive');   // 自适应预算 (前期快/后期深)
+// 后期专项优化开关: --endgame=on (新行为) / off (复原旧行为)
+const egArg = args.find(a => a.startsWith('--endgame='));
+const ENDGAME = egArg ? egArg.split('=')[1] : 'default';
 ai.configure({ snakeWeight: SNAKE_W, gapAwareMerges: !STRICT, fixedDepth: FIXED_DEPTH });
-const CFG_TAG = `snake=${SNAKE_W} merges=${STRICT ? 'strict' : 'gap'}${FIXED_DEPTH ? ' depth=' + FIXED_DEPTH : ''}${ADAPTIVE ? ' adaptive' : ''}`;
+if (ENDGAME === 'off') ai.setEndgameMode('off');
+if (ENDGAME === 'on') ai.setEndgameMode('on');
+const CFG_TAG = `snake=${SNAKE_W} merges=${STRICT ? 'strict' : 'gap'}${FIXED_DEPTH ? ' depth=' + FIXED_DEPTH : ''}${ADAPTIVE ? ' adaptive' : ''} endgame=${ENDGAME}`;
 
 // ---------- 结果落盘 ----------
 const fs = require('fs');
