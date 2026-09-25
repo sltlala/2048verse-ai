@@ -173,6 +173,11 @@ node run.js
 | `--budget MS` | 思考预算基准值（按空格数自适应缩放） | 150 |
 | `--p4 PCT` | 生成 4 的概率（%），**需与网页一致** | 10 |
 | `--window MODE` | 窗口尺寸：`none`/`max`/`fullscreen`/`fit`/`1600x900` | `none` |
+| `--headless` | 无头模式（服务器部署，不显示窗口） | 显示窗口 |
+| `--browser MODE` | `auto`（先试系统 Chrome 再回退）/`chrome`/`chromium` | `auto` |
+| `--session FILE` | 从文件导入登录会话 | — |
+| `--export-session FILE` | 导出当前登录会话后退出 | — |
+| `--webhook URL` | 每局结束后 POST 结果 JSON 到该地址 | — |
 | `--newgame` | 启动时放弃当前局面，直接开新局 | 接着玩 |
 | `--guest` | 不等待登录 | 需登录 |
 | `--no-adaptive` | 关闭自适应预算，全程用满（对照实验用） | 自适应 |
@@ -302,7 +307,9 @@ results/
 
 | 文件 | 说明 |
 |---|---|
-| `start.bat` | **一键环境安装 + 启动**（双击即用） |
+| `start.bat` | **Windows 一键环境安装 + 启动**（双击即用） |
+| `start.sh` | Linux / macOS 一键启动 |
+| `Dockerfile` / `docker-compose.yml` | 服务器容器化部署（自带 Chromium + 中文字体） |
 | `run.js` | 主脚本：浏览器控制 + HUD + 游戏循环 + 结果保存 |
 | `ai.js` | AI 引擎：Expectimax 搜索 + 启发式（可独立复用） |
 | `sim.js` | 离线模拟测试：`node sim.js 10` 跑 10 局统计强度 |
@@ -313,6 +320,100 @@ results/
 | `stats.json` | 跨会话成绩统计 |
 
 ---
+
+## 部署到服务器
+
+完全支持。服务器上没有显示器，用**无头模式**运行，截图与数据照常保存。
+
+### 方式一：Docker（推荐）
+
+镜像自带 Chromium 和中文字体，不依赖宿主机环境：
+
+```bash
+# 1. 本地导出登录会话 (见下方"登录态处理")
+node run.js --export-session session.json
+
+# 2. 把项目 + session.json 传到服务器, 然后:
+docker compose up -d --build
+
+# 3. 查看日志 / 数据
+docker compose logs -f
+ls results/screenshots/
+```
+
+`docker-compose.yml` 已挂载两个持久化目录：`.chrome-profile`（登录态）与 `results`（数据+截图），
+容器重启不会丢数据；`restart: unless-stopped` 保证崩溃后自动拉起。
+
+### 方式二：直接跑（Linux）
+
+```bash
+./start.sh --headless --newgame --browser chromium
+# 或
+npx playwright install --with-deps chromium   # 首次需装浏览器
+node run.js --headless --newgame --browser chromium
+```
+
+### 方式三：systemd 常驻
+
+```ini
+# /etc/systemd/system/2048verse.service
+[Unit]
+Description=2048verse AI bot
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/2048verse-ai
+ExecStart=/usr/bin/node run.js --headless --newgame --browser chromium
+Restart=always
+RestartSec=10
+User=botuser
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### 登录态处理（关键）
+
+**不能直接把 Windows 上的 `.chrome-profile` 拷到 Linux** —— Chrome 的 Cookie 在 Windows 上由
+DPAPI 加密，换个系统就解不开。正确做法是用 Playwright 的 `storageState` 导出明文会话：
+
+```bash
+# 本地(已登录的机器)上执行: 导出会话, 然后脚本自动退出
+node run.js --export-session session.json
+
+# 服务器上: 导入会话, 免去在服务器上登录
+node run.js --headless --session session.json --browser chromium
+```
+
+> `session.json` 含登录凭证，请勿提交到仓库（已在 `.gitignore` / `.dockerignore` 中排除），
+> 并注意设置文件权限 `chmod 600 session.json`。
+
+### 数据与截图
+
+服务器上的输出与本地完全一致：
+
+```
+results/
+├── results.jsonl                      # 每局一行 JSON
+├── history.json                       # 数组形式
+└── screenshots/<分数>_<时间点>.png     # 终局截图 (无头模式下同样正常渲染)
+```
+
+可选：每局结束后把结果 POST 到你的接口（做通知/入库）：
+
+```bash
+node run.js --headless --webhook https://your-server/api/2048-result
+```
+
+### 服务器注意事项
+
+| 事项 | 说明 |
+|---|---|
+| 资源占用 | 单个 Chromium 实例约 300-600MB 内存；1 核 1G 的小机器够用 |
+| 单实例 | 同一配置目录不能被两个进程共用，多开请用 `--profile .chrome-profile2` |
+| 无头检测 | 无头浏览器更容易被识别为自动化；网站目前未做拦截，但请自行评估风险 |
+| 时区 | 截图命名用本地时间，容器内建议设 `TZ=Asia/Shanghai` |
+| 时长 | 一局打到 32768 约 2 万步、1.5 小时左右，属正常 |
 
 ## 环境要求
 

@@ -1,0 +1,19 @@
+node_modules
+.npm-cache
+.playwright-browsers
+
+# 登录态与会话 (敏感, 绝不进镜像)
+.chrome-profile
+.chrome-profile*
+session.json
+
+# 运行产物
+results
+stats.json
+
+# 临时文件
+*.png
+*.log
+*.tmp
+_bat_out.txt
+_bat_err.txt

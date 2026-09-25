@@ -1,0 +1,21 @@
+services:
+  bot:
+    build: .
+    image: 2048verse-ai:latest
+    container_name: 2048verse-bot
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      # 登录态 (持久化, 避免每次重新登录)
+      - ./.chrome-profile:/app/.chrome-profile
+      # 每局数据 (results.jsonl / history.json) 与结束截图
+      - ./results:/app/results
+      # 会话文件 (本地导出后放到这里)
+      - ./session.json:/app/session.json:ro
+    # 想改参数直接覆盖 command
+    command: >
+      node run.js --headless --newgame
+      --browser chromium
+      --session session.json
+      --speed 30 --budget 150 --p4 10

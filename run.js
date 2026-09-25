@@ -28,7 +28,7 @@ const ai = require('./ai');
 
 // ---------- 命令行参数 ----------
 function parseArgs() {
-  const args = { games: Infinity, speed: 30, newgame: false, profile: '.chrome-profile', guest: false, budget: 150, p4: 10, depth: 0, snake: 0, noAdaptive: false, windowSize: 'none' };
+  const args = { games: Infinity, speed: 30, newgame: false, profile: '.chrome-profile', guest: false, budget: 150, p4: 10, depth: 0, snake: 0, noAdaptive: false, windowSize: 'none', headless: false, browser: 'auto', webhook: null, session: null, exportSession: null };
   const raw = process.argv.slice(2);
   for (let i = 0; i < raw.length; i++) {
     if (raw[i] === '--games') args.games = parseInt(raw[++i], 10);
@@ -41,7 +41,12 @@ function parseArgs() {
     else if (raw[i] === '--profile') args.profile = raw[++i];
     else if (raw[i] === '--guest') args.guest = true;
     else if (raw[i] === '--no-adaptive') args.noAdaptive = true; // 关闭自适应预算(全程用满)
-    else if (raw[i] === '--window') args.windowSize = raw[++i];  // 窗口尺寸: max 或 1600x900
+    else if (raw[i] === '--window') args.windowSize = raw[++i];  // 窗口尺寸: none/max/fullscreen/fit/WxH
+    else if (raw[i] === '--headless') args.headless = true;      // 无头模式 (服务器部署)
+    else if (raw[i] === '--browser') args.browser = raw[++i];    // auto | chrome | chromium
+    else if (raw[i] === '--webhook') args.webhook = raw[++i];    // 每局结束后 POST 结果到该 URL
+    else if (raw[i] === '--session') args.session = raw[++i];    // 从文件导入登录会话 (服务器部署)
+    else if (raw[i] === '--export-session') args.exportSession = raw[++i]; // 导出当前登录会话到文件
     else if (raw[i] === '--selftest-nav') args.selftestNav = true; // 内部测试: 模拟登录跳转
   }
   return args;
@@ -161,6 +166,20 @@ async function saveGameResult(page, result, gameNo, label = 'gameover') {
 
   console.log(`  💾 已保存: results/screenshots/${base}.png`);
   console.log(`     分数 ${fmt(score)} | Tile Sum ${fmt(tileSum)} | Moves ${moves} | 生成4率 ${fourSpawnPct}% | 最大 ${maxTile}`);
+
+  // 可选: POST 到 webhook (服务器部署时可用来推送通知/入库)
+  if (ARGS.webhook) {
+    try {
+      const res = await fetch(ARGS.webhook, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(record),
+      });
+      console.log(`     ↪ webhook: HTTP ${res.status}`);
+    } catch (e) {
+      console.log('     ⚠ webhook 推送失败: ' + e.message.split('\n')[0]);
+    }
+  }
   return record;
 }
 
@@ -642,6 +661,91 @@ async function applyWindowSize(context, spec) {
   }
 }
 
+// ---------- 会话导入/导出 (服务器部署用) ----------
+// Windows 的 Chrome Cookie 由 DPAPI 加密, 直接拷贝 .chrome-profile 到 Linux 会失效。
+// 用 Playwright storageState: 它通过 CDP 读出明文 Cookie, 可在任意平台注入。
+//   本地(已登录): node run.js --export-session session.json
+//   服务器:       node run.js --headless --session session.json --browser chromium
+async function exportSession(context, file, page) {
+  const state = await context.storageState();
+  const out = { savedAt: new Date().toISOString(), cookies: state.cookies, origins: state.origins || [] };
+  // 补充 localStorage 里的游戏相关键 (登录凭证通常在 cookie, 这里只是保险)
+  try {
+    const ls = await safeEval(page, () => {
+      const o = {};
+      for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); o[k] = localStorage.getItem(k); }
+      return o;
+    });
+    if (ls) out.localStorage = ls;
+  } catch { }
+  fs.writeFileSync(file, JSON.stringify(out, null, 2));
+  return out;
+}
+
+async function applySession(context, file, page) {
+  let s;
+  try { s = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {
+    console.log(`  ⚠ 会话文件读取失败 (${file}): ` + e.message.split('\n')[0]);
+    return false;
+  }
+  try {
+    if (Array.isArray(s.cookies) && s.cookies.length) {
+      await context.addCookies(s.cookies);
+      console.log(`  🔑 已注入 ${s.cookies.length} 个 Cookie`);
+    }
+    if (s.localStorage && page) {
+      await page.addInitScript((kv) => {
+        try {
+          if (!/2048verse\.com/.test(location.hostname)) return;
+          for (const k of Object.keys(kv)) {
+            if (kv[k] !== null && kv[k] !== undefined) localStorage.setItem(k, kv[k]);
+          }
+        } catch { }
+      }, s.localStorage);
+      console.log(`  🔑 已注入 ${Object.keys(s.localStorage).length} 个 localStorage 键`);
+    }
+    return true;
+  } catch (e) {
+    console.log('  ⚠ 会话注入失败: ' + e.message.split('\n')[0]);
+    return false;
+  }
+}
+
+// ---------- 浏览器启动 ----------
+// 优先用系统 Chrome; 服务器上没有 Chrome 时自动回退到 Playwright 自带 Chromium
+// (需先执行 npx playwright install --with-deps chromium)
+// root 用户下 Chrome 拒绝启用沙箱, 此时自动关闭沙箱 (服务器场景可接受)
+async function launchGameBrowser(userDataDir) {
+  const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+  const baseOpts = {
+    headless: !!ARGS.headless,
+    viewport: ARGS.headless ? { width: 1440, height: 900 } : null,
+    // 沙箱: 只在非 root 且非无头时启用 (Chrome 在 root 下会直接拒绝启动)
+    ...(isRoot ? {} : { chromiumSandbox: true, ignoreDefaultArgs: ['--no-sandbox'] }),
+    args: [],
+  };
+
+  const want = ARGS.browser; // 'auto' | 'chrome' | 'chromium'
+  if (want === 'chromium') {
+    console.log('  🌐 使用 Playwright 自带 Chromium');
+    return chromium.launchPersistentContext(userDataDir, baseOpts);
+  }
+  if (want === 'chrome') {
+    console.log('  🌐 使用系统 Google Chrome' + (isRoot ? ' (root 环境: 已关闭沙箱)' : ''));
+    return chromium.launchPersistentContext(userDataDir, { ...baseOpts, channel: 'chrome' });
+  }
+  // auto: 先试系统 Chrome, 失败回退自带 Chromium
+  try {
+    const ctx = await chromium.launchPersistentContext(userDataDir, { ...baseOpts, channel: 'chrome' });
+    console.log('  🌐 使用系统 Google Chrome' + (isRoot ? ' (root 环境: 已关闭沙箱)' : ''));
+    return ctx;
+  } catch (e) {
+    console.log('  ⚠ 系统 Chrome 不可用 (' + e.message.split('\n')[0] + ')');
+    console.log('  🌐 回退到 Playwright 自带 Chromium');
+    return chromium.launchPersistentContext(userDataDir, baseOpts);
+  }
+}
+
 // ---------- 页面管理 ----------
 // 找一个可用的游戏页: 优先当前页, 其次有棋盘的页, 否则新开
 async function ensureGamePage(browser, current) {
@@ -697,16 +801,7 @@ function scheduleSelfTestNav(page) {
   const userDataDir = path.resolve(__dirname, ARGS.profile);
   let browser;
   try {
-    browser = await chromium.launchPersistentContext(userDataDir, {
-      channel: 'chrome',
-      headless: false,
-      viewport: null,                       // 使用真实窗口尺寸
-      chromiumSandbox: true,                // 启用沙箱 (避免 --no-sandbox 警告条)
-      ignoreDefaultArgs: ['--no-sandbox'],  // 去掉 Playwright 默认注入的 --no-sandbox
-      // 注意: 不再传任何自定义标志 (如 --disable-blink-features=AutomationControlled),
-      // 否则 Chrome 会弹"不受支持的命令行标记"警告条
-      args: [],
-    });
+    browser = await launchGameBrowser(userDataDir);
   } catch (e) {
     console.error('\n❌ 浏览器启动失败: ' + e.message.split('\n')[0]);
     console.error('   常见原因: 上一次运行残留的 Chrome 窗口仍占用配置目录 ' + ARGS.profile);
@@ -715,8 +810,12 @@ function scheduleSelfTestNav(page) {
     process.exit(1);
   }
 
-  // 启动后调整窗口大小 (默认最大化; 可用 --window 1600x900 指定)
-  await applyWindowSize(browser, ARGS.windowSize);
+  // 窗口尺寸 (无头模式下跳过)
+  if (ARGS.headless) {
+    console.log('  🖥  无头模式 (headless): 不显示窗口, 截图与数据照常保存');
+  } else {
+    await applyWindowSize(browser, ARGS.windowSize);
+  }
   browser.on('disconnected', () => { browserDisconnected = true; });
   browser.on('dialog', d => d.accept().catch(() => { }));
 
@@ -735,6 +834,16 @@ function scheduleSelfTestNav(page) {
   await page.waitForSelector('#board-4x4', { timeout: 30000 });
   await sleep(1500);
 
+  // 导入登录会话 (服务器部署: 免去在服务器上手动登录)
+  if (ARGS.session) {
+    const ok = await applySession(browser, ARGS.session, page);
+    if (ok) {
+      await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => { });
+      await page.waitForSelector('#board-4x4', { timeout: 20000 }).catch(() => { });
+      await sleep(1200);
+    }
+  }
+
   // 等待登录 (返回实际可用的游戏页)
   if (ARGS.guest) {
     console.log('⏩ 游客模式: 跳过登录 (成绩不计入账号)');
@@ -750,9 +859,25 @@ function scheduleSelfTestNav(page) {
     await page.waitForSelector('#board-4x4', { timeout: 15000 }).catch(() => { });
   }
 
-  // 注入 HUD (页面右上角可视化面板)
-  if (await injectHUD(page)) console.log('🎛  HUD 已注入 (页面右上角, 显示得分/决策/深度/速度/小地图)');
-  else console.log('⚠  HUD 注入失败 (页面可能未就绪, 游戏循环中会自动重试)');
+  // 导出登录会话 (供服务器复用, 之后可 Ctrl+C)
+  if (ARGS.exportSession) {
+    const s = await exportSession(browser, ARGS.exportSession, page);
+    console.log(`\n🔑 会话已导出到 ${ARGS.exportSession}`);
+    console.log(`   Cookie ${s.cookies.length} 个, localStorage ${s.localStorage ? Object.keys(s.localStorage).length : 0} 个键`);
+    console.log(`   把它复制到服务器后: node run.js --headless --session ${path.basename(ARGS.exportSession)} --browser chromium`);
+    console.log('   (会话文件含登录凭证, 请勿公开分享)\n');
+    await browser.close().catch(() => { });
+    process.exit(0);
+  }
+
+  // 注入 HUD (页面右上角可视化面板; 无头模式下没人看, 跳过以省开销)
+  if (ARGS.headless) {
+    console.log('🎛  无头模式: 跳过 HUD 注入 (不影响数据与截图保存)');
+  } else if (await injectHUD(page)) {
+    console.log('🎛  HUD 已注入 (页面右上角, 显示得分/决策/深度/速度/小地图)');
+  } else {
+    console.log('⚠  HUD 注入失败 (页面可能未就绪, 游戏循环中会自动重试)');
+  }
   const stats = loadStats();
   console.log(`\n历史最佳: ${fmt(stats.bestScore)} (共 ${stats.games} 局)\n`);
 
