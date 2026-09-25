@@ -133,7 +133,17 @@ function configure(opts = {}) {
   if (opts.snakeWeight !== undefined) SNAKE_WEIGHT = opts.snakeWeight;
   if (opts.gapAwareMerges !== undefined) useGapAwareMerges = !!opts.gapAwareMerges;
   if (opts.fixedDepth !== undefined) FIXED_DEPTH = opts.fixedDepth | 0;
-  return { snakeWeight: SNAKE_WEIGHT, gapAwareMerges: useGapAwareMerges, fourRate: P_FOUR, fixedDepth: FIXED_DEPTH };
+  // 后期专项优化
+  if (opts.deathPenalty !== undefined) DEATH_PENALTY = +opts.deathPenalty;
+  if (opts.riskAversion !== undefined) RISK_AVERSION = +opts.riskAversion;
+  if (opts.riskMaxEmpty !== undefined) RISK_MAX_EMPTY = opts.riskMaxEmpty | 0;
+  if (opts.endgameSnakeW !== undefined) ENDGAME_SNAKE_W = +opts.endgameSnakeW;
+  if (opts.endgameSnakeMaxEmpty !== undefined) ENDGAME_SNAKE_MAX_EMPTY = opts.endgameSnakeMaxEmpty | 0;
+  return {
+    snakeWeight: SNAKE_WEIGHT, gapAwareMerges: useGapAwareMerges, fourRate: P_FOUR, fixedDepth: FIXED_DEPTH,
+    deathPenalty: DEATH_PENALTY, riskAversion: RISK_AVERSION, riskMaxEmpty: RISK_MAX_EMPTY,
+    endgameSnakeW: ENDGAME_SNAKE_W, endgameSnakeMaxEmpty: ENDGAME_SNAKE_MAX_EMPTY,
+  };
 }
 
 // ---------- 搜索参数 ----------
@@ -515,8 +525,10 @@ function chanceNode(rows, depth, cprob) {
   // 空格少(=残局, 最需要精度)时对所有空格精确建模 4; 多时用近似控制开销
   const fourLimit = n <= 4 ? n : MAX_FOUR_CELLS;
   const p2 = 1 - P_FOUR;
+  // 关键期: 启用风险厌恶 (同时记录最坏分支)
+  const riskMode = RISK_AVERSION > 0 && n <= RISK_MAX_EMPTY;
 
-  let sum = 0;
+  let sum = 0, worst = Infinity;
   for (let i = 0; i < n; i++) {
     const idx = cells[i];
     const r = idx >> 2, c = idx & 3;
@@ -526,17 +538,23 @@ function chanceNode(rows, depth, cprob) {
     // 生成 2 (rank 1)
     rows[r] = (savedRow & ~(15 << shift)) | (1 << shift);
     stats.nodes++;
-    sum += p2 * playerNode(rows, depth - 1, cprob * p2 / n);
+    let v2 = playerNode(rows, depth - 1, cprob * p2 / n);
+    sum += p2 * v2;
+    if (v2 < worst) worst = v2;
 
     // 生成 4 (rank 2); 超出限额的位置用 2 近似
     const fourRank = i < fourLimit ? 2 : 1;
     rows[r] = (savedRow & ~(15 << shift)) | (fourRank << shift);
     stats.nodes++;
-    sum += P_FOUR * playerNode(rows, depth - 1, cprob * P_FOUR / n);
+    let v4 = playerNode(rows, depth - 1, cprob * P_FOUR / n);
+    sum += P_FOUR * v4;
+    if (v4 < worst) worst = v4;
 
     rows[r] = savedRow; // 回滚
   }
-  const v = sum / n;
+  let v = sum / n;
+  // 关键期把期望值向最坏情况拉: 死了就没了, 不能只看平均
+  if (riskMode) v = (1 - RISK_AVERSION) * v + RISK_AVERSION * worst;
   ttSet(kLo, kHi, depth, v);
   return v;
 }
@@ -558,7 +576,8 @@ function playerNode(rows, depth, cprob) {
     rows[0] = s0; rows[1] = s1; rows[2] = s2; rows[3] = s3; // 回滚
   }
   if (best === -Infinity) {
-    return evaluateInPlace(rows) - W_LOST_PENALTY * 4; // 死局
+    // 死局: 用极大惩罚, 避免它被随机节点的平均稀释掉
+    return -DEATH_PENALTY; // 死局
   }
   return best;
 }
@@ -581,6 +600,16 @@ function adaptiveBudget(emptyCount, maxBudget) {
   return Math.max(5, Math.round(maxBudget * f));
 }
 
+// ---------- 后期(关键期)专项优化参数 ----------
+// 依据: 实测在 32768 阶段崩盘于"满盘无合并", 终局阶梯碎裂。
+// 三个弱点: (1) 死局惩罚被随机节点平均稀释 (2) 启发式只约束单行/单列单调性,
+//          无法阻止整体阶梯碎裂 (3) 关键期用期望值, 会被小概率灭团稀释
+let DEATH_PENALTY = 1e9;            // 死局惩罚 (远大于任何局面分差)
+let RISK_AVERSION = 0.5;            // 关键期: 最坏情况的权重 (0=纯期望)
+let RISK_MAX_EMPTY = 2;             // 空格数 <= 此值时启用风险厌恶
+let ENDGAME_SNAKE_W = 0.35;         // 后期蛇形结构项权重 (0=关闭)
+let ENDGAME_SNAKE_MAX_EMPTY = 4;    // 空格数 <= 此值时启用蛇形项
+
 // ---------- 对外主接口 ----------
 // values: 16 个数值的数组 (行优先), budgetMs: 每步时间预算 (默认 60ms)
 // 迭代加深: 从深度2逐层加深, 时间预算用完或加深不划算时停止, 用最后完整算完的一层
@@ -592,7 +621,12 @@ function getBestMove(values, budgetMs) {
   ttClear();
   stats = { nodes: 0, startTime: Date.now() };
 
-  // 蛇形启发式: 用根局面选定朝向, 全搜索沿用 (性能优化)
+  // 蛇形启发式: 后期(空格少)才启用 —— 此时结构完整性决定生死
+  // (早期对局做过 80 局 A/B 显示无效, 但那批对局都在 8192 前结束,
+  //  从未进入 16384/32768 的后期崩盘区间, 结论不适用于后期)
+  const useSnake = ENDGAME_SNAKE_W > 0 && emptyCount <= ENDGAME_SNAKE_MAX_EMPTY;
+  const baseSnakeW = SNAKE_WEIGHT;
+  if (useSnake) SNAKE_WEIGHT = ENDGAME_SNAKE_W;
   SNAKE_ACTIVE_ORIENT = SNAKE_WEIGHT > 0 ? pickSnakeOrient(rows) : -1;
 
   let bestDir = null, bestScore = null, bestDepth = 0;
@@ -611,6 +645,7 @@ function getBestMove(values, budgetMs) {
       t.score = score;
       if (score > dScore) { dScore = score; dBest = dir; }
     }
+    SNAKE_WEIGHT = baseSnakeW; // 恢复全局权重
     return {
       dir: dBest,
       dirName: dBest === null ? '死局' : DIR_NAMES[dBest],
@@ -658,6 +693,7 @@ function getBestMove(values, budgetMs) {
     if (predicted > budget * ID_LIMIT && elapsed >= budget * 0.6) break;
   }
 
+  SNAKE_WEIGHT = baseSnakeW; // 恢复全局权重
   return {
     dir: bestDir,
     dirName: bestDir === null ? '死局' : DIR_NAMES[bestDir],

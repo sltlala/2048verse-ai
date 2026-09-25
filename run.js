@@ -815,6 +815,9 @@ function scheduleSelfTestNav(page) {
 
   // 退出汇总
   console.log('\n════════════════════════════════════════════════');
+  if (browserDisconnected) {
+    console.log('  ⚠ 浏览器窗口已关闭 (或崩溃), 脚本随之退出。');
+  }
   console.log('  会话汇总');
   console.log(`  完成局数: ${completedGames}`);
   if (stats.games > 0) {
