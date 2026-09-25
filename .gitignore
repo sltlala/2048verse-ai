@@ -1,0 +1,27 @@
+# ================= 依赖 (体积大, 可重新安装) =================
+node_modules/
+.npm-cache/
+.playwright-browsers/
+
+# ================= 浏览器配置 =================
+# 注意: .chrome-profile 里保存着网站登录 Cookie, 绝对不要上传!
+.chrome-profile/
+.chrome-profile*/
+
+# ================= 运行产物 (含个人成绩与截图) =================
+results/
+stats.json
+
+# ================= 临时文件 =================
+*.tmp
+*.log
+_bat_out.txt
+_bat_err.txt
+page_top.png
+login_check.png
+
+# ================= 编辑器/系统 =================
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
