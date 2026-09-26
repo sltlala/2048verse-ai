@@ -3,7 +3,8 @@
 // 用法: node sim.js [局数] [每步预算ms] [生成4概率%] [--snake=W] [--strict-merges] [--quiet]
 // 例:   node sim.js 3 60 10 --snake=0.3
 
-const ai = require('./ai');
+const ai = require('../ai');
+const ROOT = require('path').join(__dirname, '..');
 
 const args = process.argv.slice(2);
 const quiet = args.includes('--quiet');
@@ -31,7 +32,7 @@ const CFG_TAG = `snake=${SNAKE_W} merges=${STRICT ? 'strict' : 'gap'}${FIXED_DEP
 // ---------- 结果落盘 ----------
 const fs = require('fs');
 const path = require('path');
-const RESULTS_DIR = path.join(__dirname, 'results');
+const RESULTS_DIR = path.join(ROOT, 'results');
 const SIM_JSONL = path.join(RESULTS_DIR, 'sim-results.jsonl');
 
 function tsCompact(d = new Date()) {

@@ -1,11 +1,12 @@
 // 抓取 2048verse 排行榜, 定位我方分数能排第几
 const { chromium } = require('playwright');
+const ROOT = require('path').join(__dirname, '..');
 const path = require('path');
 
 const MY_SCORE = parseInt(process.argv[2] || '338668', 10);
 
 (async () => {
-  const browser = await chromium.launchPersistentContext(path.resolve(__dirname, '.chrome-profile-lb'), {
+  const browser = await chromium.launchPersistentContext(path.resolve(ROOT, '.chrome-profile-lb'), {
     channel: 'chrome', headless: true, viewport: { width: 1440, height: 900 },
   });
   const page = browser.pages()[0] || await browser.newPage();

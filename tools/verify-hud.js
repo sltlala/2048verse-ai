@@ -1,11 +1,12 @@
 'use strict';
 // 验证 HUD 注入: 从 run.js 提取真实 HUD_HTML, 注入页面并截图
 const { chromium } = require('playwright');
+const ROOT = require('path').join(__dirname, '..');
 const fs = require('fs');
 const path = require('path');
 
 // 从 run.js 提取 HUD_HTML 模板字符串
-const src = fs.readFileSync(path.join(__dirname, 'run.js'), 'utf8');
+const src = fs.readFileSync(path.join(ROOT, 'run.js'), 'utf8');
 const m = src.match(/const HUD_HTML = `([\s\S]*?)`;/);
 if (!m) { console.error('未能提取 HUD_HTML'); process.exit(1); }
 const HUD_HTML = eval('`' + m[1] + '`');   // 展开 ${...} 表达式
@@ -15,7 +16,7 @@ console.log('开头 30 字符:', JSON.stringify(HUD_HTML.slice(0, 30)));
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 (async () => {
-  const browser = await chromium.launchPersistentContext(path.resolve(__dirname, '.chrome-profile-hudtest'), {
+  const browser = await chromium.launchPersistentContext(path.resolve(ROOT, '.chrome-profile-hudtest'), {
     channel: 'chrome', headless: false, viewport: null,
   });
   const page = browser.pages()[0] || await browser.newPage();

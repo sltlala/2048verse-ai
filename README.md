@@ -26,11 +26,11 @@
 > ⚠️ **关于样本量**：单局分数标准差高达 5-13 万，上表模拟只有 4 局，统计意义有限。
 > 早期版本还把"中位数"错误算成第 75 百分位（偶数样本取错下标），已修正为
 > 偶数样本取中间两个的平均，并新增 P25/P75 输出。
-> 判断棋力差异请用 `node sim.js 20 60 10` 跑足 20 局以上，看均值标准误而非单局结果。
+> 判断棋力差异请用 `node tools/sim.js 20 60 10` 跑足 20 局以上，看均值标准误而非单局结果。
 
 ### 模型一致性验证（无误差）
 
-`node verify-rules.js 400` 会逐步比对本地引擎与网站的真实行为：
+`node tools/verify-rules.js 400` 会逐步比对本地引擎与网站的真实行为：
 
 | 检查项 | 结果 |
 |---|---|
@@ -93,7 +93,7 @@
 ```
 
 早期版本误按 20% 建模，把搜索资源浪费在高估的风险分支上。修正概率模型后，
-最高分从 173,088 提升到 386,636（**2.2 倍**）。可用 `node measure-rate.js` 自行复测。
+最高分从 173,088 提升到 386,636（**2.2 倍**）。可用 `node tools/measure-rate.js` 自行复测。
 
 ### 5. 后期（关键期）专项优化 — 已实现，但**默认关闭**
 
@@ -127,7 +127,7 @@ ai.configure({ deathPenalty: 1e9, riskAversion: 0.5, riskMaxEmpty: 2,
 
 #### 实测结论：不显著，故默认关闭
 
-**40 局对照实验**（两组各 20 局，固定深度 4；`node ab-endgame.js 20 4`）：
+**40 局对照实验**（两组各 20 局，固定深度 4；`node tools/ab-endgame.js 20 4`）：
 
 | 变体 | 平均分 | 均值标准误 | 中位数 | 最低分 | 最大方块分布 |
 |---|---|---|---|---|---|
@@ -145,7 +145,7 @@ nneonneo 原版只用 200,000 的适度惩罚，正是为了避免这个问题�
 
 ```bash
 node run.js --endgame on            # 开启三项后期优化
-node sim.js 20 30 10 --endgame=on   # 对照测试
+node tools/sim.js 20 30 10 --endgame=on   # 对照测试
 ```
 
 > 经验教训：单局分数标准差高达 5-13 万，**2 局的结果不足以判断回归**。
@@ -408,12 +408,17 @@ results/
 | `Dockerfile` / `docker-compose.yml` | 服务器容器化部署（自带 Chromium + 中文字体） |
 | `run.js` | 主脚本：浏览器控制 + HUD + 游戏循环 + 结果保存 |
 | `ai.js` | AI 引擎：Expectimax 搜索 + 启发式（可独立复用） |
-| `sim.js` | 离线模拟测试：`node sim.js 10` 跑 10 局统计强度 |
-| `bench-depth.js` | 搜索深度基准：`node bench-depth.js 150` |
-| `measure-rate.js` | 实测网站生成 4 的真实概率 |
-| `leaderboard.js` | 查询排行榜与自身排名：`node leaderboard.js 386636` |
+| `tools/sim.js` | 离线模拟测试：`node tools/sim.js 10` 跑 10 局统计强度 |
+| `tools/bench-depth.js` | 搜索深度基准：`node tools/bench-depth.js 150` |
+| `tools/measure-rate.js` | 实测网站生成 4 的真实概率 |
+| `tools/leaderboard.js` | 查询排行榜与自身排名 |
+| `tools/verify-rules.js` | 逐步比对本地引擎与网站规则是否一致 |
+| `tools/verify-hud.js` | 验证 HUD 注入是否正常（截图确认） |
+| `tools/ab-endgame.js` | 后期优化 A/B 对照实验 |
 | `results/` | 每局数据与结束截图（运行后生成） |
+| `logs/` | 无头模式运行日志（`logs/bot.log`） |
 | `stats.json` | 跨会话成绩统计 |
+| `.chrome-profile/` | 浏览器登录态（**含 Cookie，切勿分享**） |
 
 ---
 

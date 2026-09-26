@@ -3,8 +3,9 @@
 // 原理: gameState.fourSpawns 是精确的 4 生成次数, moves 是总生成次数
 // 用法: node measure-rate.js [目标步数]
 const { chromium } = require('playwright');
+const ROOT = require('path').join(__dirname, '..');
 const path = require('path');
-const ai = require('./ai');
+const ai = require('../ai');
 
 const TARGET_MOVES = parseInt(process.argv[2] || '1500', 10);
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -25,7 +26,7 @@ async function readState(page) {
 }
 
 (async () => {
-  const browser = await chromium.launchPersistentContext(path.resolve(__dirname, '.chrome-profile-rate'), {
+  const browser = await chromium.launchPersistentContext(path.resolve(ROOT, '.chrome-profile-rate'), {
     channel: 'chrome', headless: true, viewport: { width: 1280, height: 800 },
   });
   const page = browser.pages()[0] || await browser.newPage();

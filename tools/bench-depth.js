@@ -1,7 +1,7 @@
 'use strict';
 // 搜索性能基准: 在代表性局面上测量 深度 / 节点数 / 吞吐
 // 用法: node bench-depth.js [预算ms]
-const ai = require('./ai');
+const ai = require('../ai');
 
 const BUDGET = parseInt(process.argv[2] || '150', 10);
 ai.setFourRate(10);

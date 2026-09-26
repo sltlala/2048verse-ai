@@ -4,8 +4,9 @@
 //       本地模拟 "B0 执行 D" 得到 E, 则 B1 必须等于 E + 恰好一个新方块(2或4)
 //       任何不符 = 规则不一致 (真误差)
 const { chromium } = require('playwright');
+const ROOT = require('path').join(__dirname, '..');
 const path = require('path');
-const ai = require('./ai');
+const ai = require('../ai');
 
 const MOVES = parseInt(process.argv[2] || '400', 10);
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -24,7 +25,7 @@ async function readBoard(page) {
 }
 
 (async () => {
-  const browser = await chromium.launchPersistentContext(path.resolve(__dirname, '.chrome-profile-rules'), {
+  const browser = await chromium.launchPersistentContext(path.resolve(ROOT, '.chrome-profile-rules'), {
     channel: 'chrome', headless: true, viewport: { width: 1440, height: 900 },
     chromiumSandbox: true, ignoreDefaultArgs: ['--no-sandbox'], args: [],
   });

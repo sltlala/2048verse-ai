@@ -2,6 +2,7 @@
 // A/B 对照: 后期专项优化 开/关
 // 用法: node ab-endgame.js [局数] [每变体最大并行数]
 const { spawn } = require('child_process');
+const ROOT = require('path').join(__dirname, '..');
 const path = require('path');
 
 const GAMES = parseInt(process.argv[2] || '20', 10);
@@ -14,8 +15,8 @@ console.log('');
 
 function run(variant) {
   return new Promise((resolve) => {
-    const args = ['sim.js', String(GAMES), '30', '10', `--depth=${DEPTH}`, '--quiet', `--endgame=${variant}`];
-    const p = spawn(process.execPath, args, { cwd: __dirname, stdio: ['ignore', 'pipe', 'pipe'] });
+    const args = ['tools/sim.js', String(GAMES), '30', '10', `--depth=${DEPTH}`, '--quiet', `--endgame=${variant}`];
+    const p = spawn(process.execPath, args, { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
     let buf = '';
     p.stdout.on('data', d => buf += d.toString());
     p.stderr.on('data', d => buf += d.toString());
