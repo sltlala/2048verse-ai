@@ -28,7 +28,7 @@ const ai = require('./ai');
 
 // ---------- 命令行参数 ----------
 function parseArgs() {
-  const args = { games: Infinity, speed: 30, newgame: false, profile: '.chrome-profile', guest: false, budget: 150, p4: 10, depth: 0, snake: 0, noAdaptive: false, windowSize: 'none', headless: false, browser: 'auto', webhook: null, session: null, exportSession: null, endgame: 'default' };
+  const args = { games: Infinity, speed: 30, newgame: false, profile: '.chrome-profile', guest: false, budget: 150, p4: 10, depth: 0, snake: 0, noAdaptive: false, windowSize: 'none', headless: false, browser: 'auto', webhook: null, session: null, exportSession: null, endgame: 'default', httpPort: 0, shotInterval: 0 };
   const raw = process.argv.slice(2);
   for (let i = 0; i < raw.length; i++) {
     if (raw[i] === '--games') args.games = parseInt(raw[++i], 10);
@@ -48,6 +48,8 @@ function parseArgs() {
     else if (raw[i] === '--session') args.session = raw[++i];    // 从文件导入登录会话 (服务器部署)
     else if (raw[i] === '--export-session') args.exportSession = raw[++i]; // 导出当前登录会话到文件
     else if (raw[i] === '--endgame') args.endgame = raw[++i];    // 后期专项优化: on | off
+    else if (raw[i] === '--http-port') args.httpPort = parseInt(raw[++i], 10);        // 状态面板端口 (0=关闭)
+    else if (raw[i] === '--shot-interval') args.shotInterval = parseInt(raw[++i], 10); // 定时截图秒数 (0=关闭)
     else if (raw[i] === '--selftest-nav') args.selftestNav = true; // 内部测试: 模拟登录跳转
   }
   return args;
@@ -170,7 +172,7 @@ async function saveGameResult(page, result, gameNo, label = 'gameover') {
     gameId: state ? state.gameId : null,
     board,
     screenshot: shotOk ? path.relative(__dirname, shotPath).replace(/\\/g, '/') : null,
-    config: { fourRate: ARGS.p4, budgetMs: ARGS.budget, fixedDepth: ARGS.depth, snakeWeight: ARGS.snake, speedMs: ARGS.speed },
+    config: { fourRate: ARGS.p4, budgetMs: ARGS.budget, fixedDepth: ARGS.depth, snakeWeight: ARGS.snake, speedMs: ARGS.speed, adaptive: !ARGS.noAdaptive, endgame: ARGS.endgame },
   };
   if (state && state.gameId) lastSavedGameId = state.gameId;
 
@@ -562,6 +564,14 @@ async function playOneGame(page, gameNo, stats) {
     // 准备 HUD 数据 (下一轮读状态时一并刷新, 省一次往返)
     const maxTile = Math.max(...state.board);
     const elapsedSec = (Date.now() - t0) / 1000;
+    const mps = elapsedSec > 0 ? (decisionCount / elapsedSec).toFixed(1) : '0';
+    // 同步给实时状态面板
+    setLiveStatus({
+      status: '运行中', score: state.score, moves: state.moves, empty: state.empty,
+      maxTile, arrow: ARROWS[decision.dir], dirName: decision.dirName,
+      depth: decision.depth, timeMs: decision.timeMs, budget, mps, gameNo,
+      best: Math.max(stats.bestScore, state.score), board: state.board,
+    });
     pendingHud = {
       score: state.score, moves: state.moves, empty: state.empty, maxTile,
       arrow: ARROWS[decision.dir], depth: decision.depth, timeMs: decision.timeMs,
@@ -605,6 +615,112 @@ async function playOneGame(page, gameNo, stats) {
     board: finalState ? finalState.board : [],
     durationMin: +durMin.toFixed(2),
   };
+}
+
+// ---------- 实时状态面板 (无头模式下随时查看) ----------
+// 启动一个小型 HTTP 服务: 浏览器打开 http://127.0.0.1:<port> 即可看到
+//   /           自动刷新的状态页 (含实时截图)
+//   /shot.png   当前画面截图 (每次请求实时抓取)
+//   /api/status 状态 JSON
+let liveStatus = { status: '启动中…', startAt: Date.now() };
+let livePage = null;
+let liveServer = null;
+
+function setLiveStatus(patch) {
+  liveStatus = { ...liveStatus, ...patch, ts: Date.now() };
+}
+
+function dashboardHtml() {
+  const s = liveStatus;
+  const fmtN = (n) => (n === null || n === undefined) ? '–' : Number(n).toLocaleString();
+  const ago = Math.round((Date.now() - (s.ts || Date.now())) / 1000);
+  const arrow = s.arrow || '–';
+  const cells = Array.isArray(s.board) && s.board.length === 16 ? s.board : null;
+  const colors = { 2: '#4a5568', 4: '#5a6a8a', 8: '#c26a4a', 16: '#d95f3b', 32: '#e0523a', 64: '#e8452f', 128: '#e5c04a', 256: '#e8c93a', 512: '#f0d430', 1024: '#f7dc24', 2048: '#ffd700', 4096: '#9dff5e', 8192: '#5effa8', 16384: '#4affef', 32768: '#4ab8ff' };
+  const grid = cells ? cells.map(v =>
+    `<div style="aspect-ratio:1;display:flex;align-items:center;justify-content:center;border-radius:6px;font-weight:700;font-size:13px;color:${v ? '#fff' : 'transparent'};background:${v ? (colors[v] || '#b44aff') : 'rgba(120,140,180,.12)'}">${v || ''}</div>`
+  ).join('') : '';
+  return `<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<title>2048 AI 实时状态</title>
+<meta http-equiv="refresh" content="3">
+<style>
+ body{margin:0;background:#14161c;color:#e8ecf5;font:14px/1.6 'Segoe UI',system-ui,sans-serif}
+ .wrap{max-width:1080px;margin:0 auto;padding:20px;display:grid;grid-template-columns:1fr 420px;gap:20px}
+ h1{font-size:18px;margin:0 0 4px}
+ .muted{color:#93a0b8;font-size:12px}
+ .card{background:#1b1e26;border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:14px 16px;margin-bottom:14px}
+ .kv{display:flex;justify-content:space-between;padding:3px 0}
+ .kv b{color:#ffd76e}
+ .arrow{font-size:34px;font-weight:900;color:#7fe08a;line-height:1}
+ img{width:100%;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:#000}
+ .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:8px}
+</style></head><body><div class="wrap">
+<div>
+  <h1>🤖 2048 AI 实时状态</h1>
+  <div class="muted">每 3 秒自动刷新 · 数据更新于 ${ago} 秒前 · ${new Date(s.ts || Date.now()).toLocaleTimeString('zh-CN')}</div>
+  <div class="card" style="margin-top:12px">
+    <div class="kv"><span>运行状态</span><b>${s.status || '–'}</b></div>
+    <div class="kv"><span>本局得分</span><b style="font-size:18px">${fmtN(s.score)}</b></div>
+    <div class="kv"><span>步数 / 空格</span><b>${fmtN(s.moves)} / ${fmtN(s.empty)}</b></div>
+    <div class="kv"><span>最大方块</span><b>${fmtN(s.maxTile)}</b></div>
+    <div class="kv"><span>当前决策</span><b style="font-size:22px">${arrow} ${s.dirName || ''}</b></div>
+    <div class="kv"><span>搜索深度 / 耗时 / 预算</span><b>${s.depth ?? '–'} / ${s.timeMs ?? '–'}ms / ${s.budget ?? '–'}ms</b></div>
+    <div class="kv"><span>速度</span><b>${s.mps || '–'} 步/秒</b></div>
+    <div class="kv"><span>局数 / 历史最佳</span><b>${fmtN(s.gameNo)} / ${fmtN(s.best)}</b></div>
+    <div class="muted" style="margin-top:6px">最近一局：${s.lastResult || '暂无'}</div>
+  </div>
+  <div class="card">当前盘面<div class="grid">${grid}</div></div>
+</div>
+<div>
+  <div class="card" style="padding:8px">
+    <img src="/shot.png?t=${Date.now()}" alt="当前页面截图">
+  </div>
+  <div class="muted">截图每次刷新实时抓取 · <a href="/shot.png" target="_blank" style="color:#7fe08a">单独打开大图</a> · <a href="/api/status" target="_blank" style="color:#7fe08a">JSON</a></div>
+</div>
+</div></body></html>`;
+}
+
+function startDashboard(port) {
+  const http = require('http');
+  liveServer = http.createServer(async (req, res) => {
+    const url = (req.url || '/').split('?')[0];
+    try {
+      if (url === '/api/status') {
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify(liveStatus, null, 2));
+        return;
+      }
+      if (url === '/shot.png') {
+        if (!livePage || livePage.isClosed()) { res.writeHead(503); res.end('page not available'); return; }
+        const buf = await livePage.screenshot({ type: 'png' });
+        res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
+        res.end(buf);
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(dashboardHtml());
+    } catch (e) {
+      try { res.writeHead(500); res.end('error: ' + e.message); } catch { }
+    }
+  });
+  liveServer.on('error', (e) => console.log(`  ⚠ 状态面板启动失败 (端口 ${port}): ${e.message}`));
+  liveServer.listen(port, '127.0.0.1', () => {
+    console.log(`  📊 实时状态面板: http://127.0.0.1:${port}   (浏览器打开即可看画面与数据)`);
+  });
+}
+
+// 定时截图 (无头模式下用文件系统也能看)
+let shotTimer = null;
+function startPeriodicShot(page, seconds) {
+  const file = path.join(SHOTS_DIR, 'live.png');
+  ensureDirs();
+  shotTimer = setInterval(async () => {
+    try {
+      if (!page || page.isClosed()) return;
+      await page.screenshot({ path: file });
+    } catch { }
+  }, Math.max(2, seconds) * 1000);
+  console.log(`  📸 每 ${seconds} 秒自动截图: results/screenshots/live.png (可随时打开查看)`);
 }
 
 // ---------- 窗口尺寸 ----------
@@ -908,6 +1024,12 @@ function scheduleSelfTestNav(page) {
   const stats = loadStats();
   console.log(`\n历史最佳: ${fmt(stats.bestScore)} (共 ${stats.games} 局)\n`);
 
+  // 实时查看: HTTP 状态面板 + 定时截图 (无头模式尤其有用)
+  livePage = page;
+  if (ARGS.httpPort > 0) startDashboard(ARGS.httpPort);
+  if (ARGS.shotInterval > 0) startPeriodicShot(page, ARGS.shotInterval);
+  setLiveStatus({ status: '准备开始', gameNo: 0, best: stats.bestScore });
+
   // 开新局 (可选) 或接着当前局面
   if (ARGS.newgame) await startNewGame(page);
 
@@ -941,6 +1063,8 @@ function scheduleSelfTestNav(page) {
 
     consecutiveErrors = 0;
     completedGames++;
+
+    setLiveStatus({ status: `本局结束 (${fmt(result.score)} 分)`, lastResult: `${fmt(result.score)} 分 / 最大 ${result.maxTile} / ${result.moves} 步 @ ${new Date().toLocaleTimeString('zh-CN')}` });
 
     // 保存本局数据 + 结束截图 (必须在开新局之前, 否则局面被重置)
     try {
@@ -991,6 +1115,9 @@ function scheduleSelfTestNav(page) {
   } catch { }
 
   try { await updateHUD(page, { status: '■ 已停止' }); } catch { }
+  setLiveStatus({ status: '已停止' });
+  if (shotTimer) clearInterval(shotTimer);
+  if (liveServer) { try { liveServer.close(); } catch { } }
   await sleep(600);
   try { await browser.close(); } catch { }
   process.exit(0);
