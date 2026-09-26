@@ -18,8 +18,10 @@ services:
       # 会话文件 (本地导出后放到这里)
       - ./session.json:/app/session.json:ro
     # 想改参数直接覆盖 command
+    # 注意: 这里故意不加 --newgame —— 重启时接着玩持久化 profile 里的那一局,
+    #       而不是把正在跑的局丢掉(局末才会上传成绩, 丢掉就等于白玩)
     command: >
-      node run.js --headless --newgame
+      node run.js --headless
       --browser chromium
       --session session.json
       --speed 30 --budget 150 --p4 10

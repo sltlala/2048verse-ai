@@ -665,45 +665,45 @@ function dashboardHtml() {
   const cells = Array.isArray(s.board) && s.board.length === 16 ? s.board : null;
   const colors = { 2: '#4a5568', 4: '#5a6a8a', 8: '#c26a4a', 16: '#d95f3b', 32: '#e0523a', 64: '#e8452f', 128: '#e5c04a', 256: '#e8c93a', 512: '#f0d430', 1024: '#f7dc24', 2048: '#ffd700', 4096: '#9dff5e', 8192: '#5effa8', 16384: '#4affef', 32768: '#4ab8ff' };
   const grid = cells ? cells.map(v =>
-    `<div style="aspect-ratio:1;display:flex;align-items:center;justify-content:center;border-radius:6px;font-weight:700;font-size:13px;color:${v ? '#fff' : 'transparent'};background:${v ? (colors[v] || '#b44aff') : 'rgba(120,140,180,.12)'}">${v || ''}</div>`
+    `<div style="color:${v ? '#fff' : 'transparent'};background:${v ? (colors[v] || '#b44aff') : 'rgba(120,140,180,.12)'}">${v || ''}</div>`
   ).join('') : '';
   return `<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>2048 AI 实时状态</title>
 <meta http-equiv="refresh" content="3">
 <style>
- body{margin:0;background:#14161c;color:#e8ecf5;font:14px/1.6 'Segoe UI',system-ui,sans-serif}
- .wrap{max-width:1080px;margin:0 auto;padding:20px;display:grid;grid-template-columns:1fr 420px;gap:20px}
+ body{margin:0;background:#14161c;color:#e8ecf5;font:15px/1.6 'Segoe UI',system-ui,sans-serif;-webkit-text-size-adjust:100%}
+ /* 单列铺满: 手机上从上到下依次是 标题 -> 状态 -> 盘面 -> 截图(最下面) */
+ .wrap{max-width:900px;margin:0 auto;padding:14px 14px calc(14px + env(safe-area-inset-bottom))}
  h1{font-size:18px;margin:0 0 4px}
  .muted{color:#93a0b8;font-size:12px}
- .card{background:#1b1e26;border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:14px 16px;margin-bottom:14px}
- .kv{display:flex;justify-content:space-between;padding:3px 0}
- .kv b{color:#ffd76e}
- .arrow{font-size:34px;font-weight:900;color:#7fe08a;line-height:1}
- img{width:100%;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:#000}
- .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:8px}
+ .card{background:#1b1e26;border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:14px 16px;margin-bottom:12px}
+ .kv{display:flex;justify-content:space-between;gap:10px;padding:3px 0}
+ .kv span{color:#aab6cc}
+ .kv b{color:#ffd76e;text-align:right}
+ .shot{display:block;width:100%;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:#000}
+ .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-top:8px}
+ .grid div{aspect-ratio:1;display:flex;align-items:center;justify-content:center;border-radius:6px;font-weight:700;font-size:clamp(12px,4.2vw,17px)}
+ a{color:#7fe08a}
 </style></head><body><div class="wrap">
-<div>
-  <h1>🤖 2048 AI 实时状态</h1>
-  <div class="muted">每 3 秒自动刷新 · 数据更新于 ${ago} 秒前 · ${new Date(s.ts || Date.now()).toLocaleTimeString('zh-CN')}</div>
-  <div class="card" style="margin-top:12px">
-    <div class="kv"><span>运行状态</span><b>${s.status || '–'}</b></div>
-    <div class="kv"><span>本局得分</span><b style="font-size:18px">${fmtN(s.score)}</b></div>
-    <div class="kv"><span>步数 / 空格</span><b>${fmtN(s.moves)} / ${fmtN(s.empty)}</b></div>
-    <div class="kv"><span>最大方块</span><b>${fmtN(s.maxTile)}</b></div>
-    <div class="kv"><span>当前决策</span><b style="font-size:22px">${arrow} ${s.dirName || ''}</b></div>
-    <div class="kv"><span>搜索深度 / 耗时 / 预算</span><b>${s.depth ?? '–'} / ${s.timeMs ?? '–'}ms / ${s.budget ?? '–'}ms</b></div>
-    <div class="kv"><span>速度</span><b>${s.mps || '–'} 步/秒</b></div>
-    <div class="kv"><span>局数 / 历史最佳</span><b>${fmtN(s.gameNo)} / ${fmtN(s.best)}</b></div>
-    <div class="muted" style="margin-top:6px">最近一局：${s.lastResult || '暂无'}</div>
-  </div>
-  <div class="card">当前盘面<div class="grid">${grid}</div></div>
+<h1>🤖 2048 AI 实时状态</h1>
+<div class="muted">每 3 秒自动刷新 · 数据更新于 ${ago} 秒前 · ${new Date(s.ts || Date.now()).toLocaleTimeString('zh-CN')}</div>
+<div class="card" style="margin-top:12px">
+  <div class="kv"><span>运行状态</span><b>${s.status || '–'}</b></div>
+  <div class="kv"><span>本局得分</span><b style="font-size:18px">${fmtN(s.score)}</b></div>
+  <div class="kv"><span>步数 / 空格</span><b>${fmtN(s.moves)} / ${fmtN(s.empty)}</b></div>
+  <div class="kv"><span>最大方块</span><b>${fmtN(s.maxTile)}</b></div>
+  <div class="kv"><span>当前决策</span><b style="font-size:22px">${arrow} ${s.dirName || ''}</b></div>
+  <div class="kv"><span>搜索深度 / 耗时 / 预算</span><b>${s.depth ?? '–'} / ${s.timeMs ?? '–'}ms / ${s.budget ?? '–'}ms</b></div>
+  <div class="kv"><span>速度</span><b>${s.mps || '–'} 步/秒</b></div>
+  <div class="kv"><span>局数 / 历史最佳</span><b>${fmtN(s.gameNo)} / ${fmtN(s.best)}</b></div>
+  <div class="muted" style="margin-top:6px">最近一局：${s.lastResult || '暂无'}</div>
 </div>
-<div>
-  <div class="card" style="padding:8px">
-    <img src="/shot.png?t=${Date.now()}" alt="当前页面截图">
-  </div>
-  <div class="muted">截图每次刷新实时抓取 · <a href="/shot.png" target="_blank" style="color:#7fe08a">单独打开大图</a> · <a href="/api/status" target="_blank" style="color:#7fe08a">JSON</a></div>
+<div class="card">当前盘面<div class="grid">${grid}</div></div>
+<div class="card" style="padding:8px">
+  <img class="shot" src="/shot.png?t=${Date.now()}" alt="当前页面截图">
 </div>
+<div class="muted" style="text-align:center">截图每次刷新实时抓取 · <a href="/shot.png" target="_blank">单独打开大图</a> · <a href="/api/status" target="_blank">JSON</a></div>
 </div></body></html>`;
 }
 
@@ -858,15 +858,20 @@ async function applySession(context, file, page) {
       console.log(`  🔑 已注入 ${s.cookies.length} 个 Cookie`);
     }
     if (s.localStorage && page) {
-      await page.addInitScript((kv) => {
+      // 会话文件里的 gameState4x4 是"导出那一刻"的旧局面, 注入会覆盖浏览器里正在玩的那一局
+      // (持久化 profile 保存着最新局面) —— 重启后就会白白丢掉当前这局。这里跳过它。
+      const SKIP = new Set(['gameState4x4']);
+      const kv = {};
+      for (const k of Object.keys(s.localStorage)) if (!SKIP.has(k)) kv[k] = s.localStorage[k];
+      await page.addInitScript((kv2) => {
         try {
           if (!/2048verse\.com/.test(location.hostname)) return;
-          for (const k of Object.keys(kv)) {
-            if (kv[k] !== null && kv[k] !== undefined) localStorage.setItem(k, kv[k]);
+          for (const k of Object.keys(kv2)) {
+            if (kv2[k] !== null && kv2[k] !== undefined) localStorage.setItem(k, kv2[k]);
           }
         } catch { }
-      }, s.localStorage);
-      console.log(`  🔑 已注入 ${Object.keys(s.localStorage).length} 个 localStorage 键`);
+      }, kv);
+      console.log(`  🔑 已注入 ${Object.keys(kv).length} 个 localStorage 键 (跳过局面 gameState4x4)`);
     }
     return true;
   } catch (e) {
