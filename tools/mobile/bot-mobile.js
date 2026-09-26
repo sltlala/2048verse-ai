@@ -11,9 +11,12 @@
 //
 // 加速要点:
 //   1. 每步只截一次图: 滑动后的"确认截图"直接作为下一步输入
-//   2. 棋盘识别用定长直方图 + 跳采样 (board.js), 约 70ms -> 2ms
-//   3. 滑动/点击走常驻 adb shell 通道 (shell.js), 省掉每次 76ms 的进程启动
-//   4. 用 ai.simulateMove 精确校验落子结果, 可以放心把等待压到最小
+//   2. 截图直连 adb server 的 5037 端口 (adbraw.js), 省掉每次启动 adb.exe 的 ~76ms
+//   3. 识别只解棋盘区域 (board.js 的 decodeRegion), 不再整屏解码 14MB
+//   4. 滑动/点击走常驻 adb shell 通道 (shell.js), 再省一次进程启动
+//   5. 用 ai.simulateMove 精确校验落子结果, 等待时间可以压到最小
+//
+// 实测: 0.83 步/秒 -> 1.58 步/秒 (1260x2800 竖屏, vivo V2339FA)
 //
 // 关键点:
 //   - Unity 游戏读不到控件, 只能截图识别 (tools/mobile/board.js)
@@ -158,7 +161,7 @@ function startNewGame() {
     `${DISCOVER_ONLY ? '  [仅识别模式]' : ''}`);
   console.log('');
 
-  let moves = 0, games = 1, gameMoves = 0, gameStart = Date.now();
+  let moves = 0, games = 1, gameMoves = 0, gameStart = Date.now(), blankRestarts = 0;
   const t0 = Date.now();
   // 上一步滑动后的确认截图: 直接给下一步用, 保证每步只截一次图
   let pending = null;
@@ -214,6 +217,19 @@ function startNewGame() {
       } catch (_) { /* 记录失败不影响继续玩 */ }
 
       if (!RESTART) break;
+
+      // 连续死局且一步都没走成 -> 多半是"重置"按钮坐标不对, 不能无限点下去
+      if (gameMoves === 0) {
+        blankRestarts++;
+        if (blankRestarts >= 3) {
+          console.log('\n⚠️ 连续 3 次开新局后棋盘仍是死局: "重置"按钮坐标可能已过期');
+          console.log(`   当前设置: board.js 里的 UI.reset = (${boardLib.UI.reset.x}, ${boardLib.UI.reset.y})`);
+          console.log('   请重新截图确认按钮位置 (GAMEOVER 后右侧那个按钮), 或换用 tools/mobile/calibrate.js');
+          break;
+        }
+      } else {
+        blankRestarts = 0;
+      }
 
       await startNewGame();
       await sleep(RESTART_WAIT);
