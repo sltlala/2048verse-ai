@@ -28,7 +28,7 @@ const ai = require('./ai');
 
 // ---------- 命令行参数 ----------
 function parseArgs() {
-  const args = { games: Infinity, speed: 30, newgame: false, profile: '.chrome-profile', guest: false, budget: 150, p4: 10, depth: 0, snake: 0, noAdaptive: false, windowSize: 'none', headless: false, browser: 'auto', webhook: null, session: null, exportSession: null, endgame: 'default', httpPort: 0, shotInterval: 0 };
+  const args = { games: Infinity, speed: 30, newgame: false, profile: '.chrome-profile', guest: false, budget: 150, p4: 10, depth: 0, snake: 0, noAdaptive: false, windowSize: 'none', headless: false, browser: 'auto', webhook: null, session: null, exportSession: null, endgame: 'default', httpPort: 0, shotInterval: 0, restartDelay: 5 };
   const raw = process.argv.slice(2);
   for (let i = 0; i < raw.length; i++) {
     if (raw[i] === '--games') args.games = parseInt(raw[++i], 10);
@@ -50,6 +50,7 @@ function parseArgs() {
     else if (raw[i] === '--endgame') args.endgame = raw[++i];    // 后期专项优化: on | off
     else if (raw[i] === '--http-port') args.httpPort = parseInt(raw[++i], 10);        // 状态面板端口 (0=关闭)
     else if (raw[i] === '--shot-interval') args.shotInterval = parseInt(raw[++i], 10); // 定时截图秒数 (0=关闭)
+    else if (raw[i] === '--restart-delay') args.restartDelay = parseInt(raw[++i], 10); // 局间等待秒数 (让成绩上传完成)
     else if (raw[i] === '--selftest-nav') args.selftestNav = true; // 内部测试: 模拟登录跳转
   }
   return args;
@@ -157,6 +158,20 @@ async function saveGameResult(page, result, gameNo, label = 'gameover') {
     shotOk = true;
   } catch (e) { console.log('  ⚠ 截图失败: ' + e.message.split('\n')[0]); }
 
+  // 网站侧校验: 本局分数是否已被服务器接受 (服务器只保留历史最高)
+  const siteScore = state ? state.siteScore : null;
+  const siteBest = state ? state.siteBest : null;
+  let uploaded = null;
+  if (siteBest !== null && score > 0) {
+    uploaded = siteBest >= score;
+    if (!uploaded) {
+      console.log(`  ⚠️ 网站最高分仍为 ${fmt(siteBest)}, 本局 ${fmt(score)} 未体现在服务器上!`);
+      console.log(`     (可能上传未完成或被打断 — 建议放慢重开速度, 见 --restart-delay)`);
+    } else {
+      console.log(`  ✅ 网站最高分已更新为 ${fmt(siteBest)}`);
+    }
+  }
+
   const record = {
     gameNo,
     label,                                  // gameover / interrupted
@@ -172,6 +187,9 @@ async function saveGameResult(page, result, gameNo, label = 'gameover') {
     gameId: state ? state.gameId : null,
     board,
     screenshot: shotOk ? path.relative(__dirname, shotPath).replace(/\\/g, '/') : null,
+    siteScore,            // 网站页面上的"分数"
+    siteBest,             // 网站页面上的"最高分" (服务器侧历史最高)
+    uploaded,             // 本局是否已体现在服务器最高分上
     config: { fourRate: ARGS.p4, budgetMs: ARGS.budget, fixedDepth: ARGS.depth, snakeWeight: ARGS.snake, speedMs: ARGS.speed, adaptive: !ARGS.noAdaptive, endgame: ARGS.endgame },
   };
   if (state && state.gameId) lastSavedGameId = state.gameId;
@@ -224,6 +242,13 @@ async function readStateAndHUD(page, hud) {
           }
           const msg = document.querySelector('#board-4x4 .game-message');
           const msgShown = msg && msg.style.display !== 'none';
+          // 读取网站自己的 分数 / 最高分 面板 (用于校验成绩是否上传成功)
+          const panels = {};
+          document.querySelectorAll('.info-display').forEach(e => {
+            const l = (e.querySelector('.info-label')?.textContent || '').trim();
+            const v = (e.querySelector('.info-value')?.textContent || '').trim();
+            if (l) panels[l] = parseInt(v.replace(/[^\d]/g, ''), 10) || 0;
+          });
           state = {
             board, empty, score: s.score, moves: s.moves,
             fourSpawns: s.fourSpawns || 0,
@@ -231,6 +256,8 @@ async function readStateAndHUD(page, hud) {
             gameId: s.gameId, msgShown,
             msgText: msgShown ? msg.innerText.slice(0, 50) : null,
             hudAlive: !!document.getElementById('dsh-hud'),
+            siteScore: panels['分数'] ?? null,
+            siteBest: panels['最高分'] ?? null,
           };
         } catch { state = null; }
       }
@@ -1084,6 +1111,12 @@ function scheduleSelfTestNav(page) {
     saveStats(stats);
 
     if (gameNo < ARGS.games && !process.exitRequested && !browserDisconnected) {
+      // 等待网站完成成绩上传后再开新局 (避免上传被切换打断)
+      const wait = ARGS.restartDelay > 0 ? ARGS.restartDelay : 0;
+      if (wait) {
+        console.log(`  等待 ${wait} 秒让网站完成成绩上传...`);
+        await sleep(wait * 1000);
+      }
       console.log('  自动开始下一局...');
       await startNewGame(page);
     }
