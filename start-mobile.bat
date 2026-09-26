@@ -77,7 +77,6 @@ echo.
 echo ============================================================
 echo   Starting the bot. Extra args are passed through, e.g.:
 echo     start-mobile.bat --moves 300 --budget 120
-echo     start-mobile.bat --undo-try rescue     (faster: undo only to survive)
 echo     start-mobile.bat --p4 20               (if the app spawns 4s at 20%%
 echo                                           measure it: node tools\mobile\measure-rate.js 400)
 echo   Results: mobile-results.jsonl   Screenshots: mobile-shots\

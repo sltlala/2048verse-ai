@@ -625,11 +625,9 @@ function setEndgameMode(mode) {
 
 // ---------- 对外主接口 ----------
 // values: 16 个数值的数组 (行优先), budgetMs: 每步时间预算 (默认 60ms)
-// opts.exclude: 禁用的方向数组 (手机版用: 撤销后避免重复走那个把局面走死的方向)
 // 迭代加深: 从深度2逐层加深, 时间预算用完或加深不划算时停止, 用最后完整算完的一层
-function getBestMove(values, budgetMs, opts) {
+function getBestMove(values, budgetMs) {
   const budget = budgetMs || 60;
-  const exclude = opts && opts.exclude && opts.exclude.length ? new Set(opts.exclude) : null;
   const rows = valuesToBoard(values);
   const emptyCount = values.filter(v => v === 0).length;
 
@@ -655,7 +653,7 @@ function getBestMove(values, budgetMs, opts) {
       const { moved, gain } = moveInPlace(work, dir);
       const t = { dir, score: null, gain, depth: FIXED_DEPTH };
       tried.push(t);
-      if (!moved || (exclude && exclude.has(dir))) continue;
+      if (!moved) continue;
       const score = chanceNode(work, FIXED_DEPTH, 1.0);
       t.score = score;
       if (score > dScore) { dScore = score; dBest = dir; }
@@ -686,7 +684,7 @@ function getBestMove(values, budgetMs, opts) {
         const { moved, gain } = moveInPlace(work, dir);
         const t = tried[dir] || (tried[dir] = { dir, score: null, gain: 0, depth: 0 });
         t.gain = gain;
-        if (!moved || (exclude && exclude.has(dir))) { t.score = null; continue; }
+        if (!moved) { t.score = null; continue; }
         const score = chanceNode(work, depth, 1.0);
         t.score = score; t.depth = depth;
         if (score > dScore) { dScore = score; dBest = dir; }
