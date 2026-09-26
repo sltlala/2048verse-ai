@@ -46,3 +46,6 @@ _cmsg*.txt
 # 运行日志目录 (被上面的注释行粘住了, 这里补一条有效规则)
 logs/
 *.log
+
+# 手机版实测统计 (本地生成)
+mobile-spawn-stats.json

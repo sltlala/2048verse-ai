@@ -21,16 +21,23 @@ const COLOR_MAP = {
   '#0442E5': 128,
   '#6155DC': 256,
   '#A580EB': 512,    // 实测确认 (样本 A580EB_r0c3.png)
-  '#B163FF': 1024,   // 实测确认 (样本 B163FF_r0c0.png, 两个 512 合并时抓到的)
+  '#B163FF': 1024,   // 实测确认 (样本 B163FF_r0c0.png)
+  '#9E00E9': 2048,   // 实测确认 (样本 9E00E9_r3c0.png)
 };
 
 // 设备实测的棋盘矩形 (1260x2800 竖屏)
 const BOARD = { left: 105, top: 1085, right: 1154, bottom: 2134 };
 
-// 界面按钮坐标 (1260x2800 竖屏, 由截图人工确认)
+// 界面按钮坐标 (1260x2800 竖屏, 由截图实测矩形得到)
+//   撤回: x 650..847, y 872..1009    菜单/重置: x 903..1099, y 872..1009
+//   注意: 右边那个按钮在游戏中是「菜单」, 只有出现 GAMEOVER 时才变成「重置」!
+//         所以只有确认棋盘已经无路可走时才能点它, 否则会弹出设置面板。
 const UI = {
-  reset: { x: 1004, y: 954 },   // "重置" 按钮 (GAMEOVER 后开新局)
-  undo: { x: 750, y: 954 },     // "撤回" 按钮 (本项目不使用)
+  undo: { x: 748, y: 940 },     // "撤回" 按钮 (撤销上一步, 棋盘和分数一起回退)
+  reset: { x: 1001, y: 940 },   // 右侧按钮: 游戏中是"菜单", GAMEOVER 时是"重置"
+  menu: { x: 1001, y: 940 },
+  back: { x: 1008, y: 741 },    // 设置面板里的"返回" (用来关掉误弹出的面板)
+  score: { left: 150, top: 790, right: 620, bottom: 990 },   // 分数大字区域 (备用)
 };
 
 const hex = (r, g, b) => '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('').toUpperCase();
@@ -69,6 +76,41 @@ function modeColor(data, W, H, x0, y0, x1, y1) {
   return { rgb, hex: hex(...rgb), share: +(bestN / total).toFixed(3) };
 }
 
+// 只取四个角采样: 数字是居中放的大号白字, 4~5 位数时中间几乎被笔画占满,
+// 但四个角永远是方块底色。众数占比低于阈值时用它兜底, 避免把白色误认成底色。
+function modeColorCorners(data, W, H, x0, y0, x1, y1) {
+  const w = x1 - x0, h = y1 - y0;
+  const cw = Math.max(2, Math.round(w * 0.30)), ch = Math.max(2, Math.round(h * 0.30));
+  const parts = [
+    [x0, y0, x0 + cw, y0 + ch],
+    [x1 - cw, y0, x1, y0 + ch],
+    [x0, y1 - ch, x0 + cw, y1],
+    [x1 - cw, y1 - ch, x1, y1],
+  ];
+  const touched = [];
+  let total = 0;
+  for (const [a, b, c, d] of parts) {
+    for (let y = Math.max(0, Math.ceil(b)); y < Math.min(H, d); y += STRIDE) {
+      const rowBase = y * W;
+      for (let x = Math.max(0, Math.ceil(a)); x < Math.min(W, c); x += STRIDE) {
+        const i = (rowBase + x) * 4;
+        const r = data[i], g = data[i + 1], b = data[i + 2];
+        const k = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+        if (HIST_N[k] === 0) touched.push(k);
+        HIST_N[k]++; HIST_R[k] += r; HIST_G[k] += g; HIST_B[k] += b;
+        total++;
+      }
+    }
+  }
+  let best = -1, bestN = -1;
+  for (const k of touched) if (HIST_N[k] > bestN) { bestN = HIST_N[k]; best = k; }
+  if (best < 0 || total === 0) return { rgb: [0, 0, 0], hex: '#000000', share: 0 };
+  const rgb = [Math.round(HIST_R[best] / bestN), Math.round(HIST_G[best] / bestN), Math.round(HIST_B[best] / bestN)];
+  for (const k of touched) { HIST_N[k] = 0; HIST_R[k] = 0; HIST_G[k] = 0; HIST_B[k] = 0; }
+  return { rgb, hex: hex(...rgb), share: +(bestN / total).toFixed(3) };
+}
+const MIN_SHARE = 0.62;   // 众数占比低于此值时, 改用四角采样复核
+
 // 解析一张已解码的 PNG -> { board:number[16], unknown:[{r,c,hex,share}], colors:string[16] }
 function readBoardFromPng(png, opts = {}) {
   const { width: W, height: H, data } = png;
@@ -82,7 +124,12 @@ function readBoardFromPng(png, opts = {}) {
       const x0 = B.left + bw * c / 4, x1 = B.left + bw * (c + 1) / 4;
       const y0 = B.top + bh * r / 4, y1 = B.top + bh * (r + 1) / 4;
       const padX = (x1 - x0) * 0.18, padY = (y1 - y0) * 0.18;
-      const m = modeColor(data, W, H, x0 + padX, y0 + padY, x1 - padX, y1 - padY);
+      let m = modeColor(data, W, H, x0 + padX, y0 + padY, x1 - padX, y1 - padY);
+      if (m.share < MIN_SHARE) {
+        // 中间被大字占太多 -> 用四角复核一次 (角上一定是底色)
+        const c = modeColorCorners(data, W, H, x0 + padX, y0 + padY, x1 - padX, y1 - padY);
+        if (c.share > m.share) m = c;
+      }
       colors[r * 4 + c] = m.hex;
       if (Object.prototype.hasOwnProperty.call(COLOR_MAP, m.hex)) {
         board[r * 4 + c] = COLOR_MAP[m.hex];
@@ -95,6 +142,29 @@ function readBoardFromPng(png, opts = {}) {
 }
 
 function decode(buf) { return PNG.sync.read(buf); }
+
+// 一次性解出"棋盘 + 上方按钮条": 反滤波本来就要从第 0 行做到棋盘底边,
+// 顺带把按钮条包含进来是免费的, 于是可以顺便判断游戏界面有没有被面板盖住。
+const FRAME = { left: BOARD.left, top: 860, right: BOARD.right, bottom: BOARD.bottom };
+const BOARD_IN_FRAME = {
+  left: 0, top: BOARD.top - FRAME.top,
+  right: BOARD.right - FRAME.left, bottom: BOARD.bottom - FRAME.top,
+};
+// 游戏界面(含 GAMEOVER)里 "撤回" 按钮的底色; 被设置面板盖住时会变成 #3ECBD1
+const BTN_GAME_RGB = [0x82, 0xDA, 0xDD];
+const BTN_PROBES = [[690, 880], [748, 890], [820, 885], [700, 1000], [830, 1000]];
+
+function uiCovered(img) {
+  let game = 0;
+  for (const [x, y] of BTN_PROBES) {
+    const ix = x - FRAME.left, iy = y - FRAME.top;
+    if (ix < 0 || iy < 0 || ix >= img.width || iy >= img.height) continue;
+    const i = (iy * img.width + ix) * 4;
+    const d = Math.abs(img.data[i] - BTN_GAME_RGB[0]) + Math.abs(img.data[i + 1] - BTN_GAME_RGB[1]) + Math.abs(img.data[i + 2] - BTN_GAME_RGB[2]);
+    if (d < 40) game++;
+  }
+  return game < 2;
+}
 
 // 只解出棋盘区域的快速解码器。
 // pngjs 的整屏解码约 90ms (14MB 缓冲区 + 全屏反滤波), 而我们只用棋盘那一块;
@@ -197,13 +267,20 @@ function boardToText(board) {
   return lines.join('\n');
 }
 
-// 快速路径: 只解棋盘区域, 并直接按棋盘坐标识别
+// 快速路径: 一次解码同时拿到棋盘和"界面是否被面板盖住"的判定
 function readBoardFast(buf, opts = {}) {
   const B = opts.board || BOARD;
   const rw = B.right - B.left, rh = B.bottom - B.top;
-  const img = decodeRegion(buf, B);
-  if (!img) return readBoardFromPng(decode(buf), opts);      // 特殊情况回退
-  const r = readBoardFromPng(img, { board: { left: 0, top: 0, right: rw, bottom: rh } });
+  const img = decodeRegion(buf, FRAME);
+  if (!img) {
+    const full = decode(buf);
+    const r = readBoardFromPng(full, opts);
+    r.covered = false;
+    r.image = full;
+    return r;
+  }
+  const r = readBoardFromPng(img, { board: BOARD_IN_FRAME });
+  r.covered = uiCovered(img);
   r.image = img;
   return r;
 }
