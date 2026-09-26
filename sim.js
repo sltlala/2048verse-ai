@@ -140,7 +140,12 @@ function fmtBoard(b) {
 
   console.log('===== 汇总 =====');
   console.log(`平均得分: ${mean.toFixed(0)}  (标准差 ${sd.toFixed(0)}, 均值标准误 ${(sd / Math.sqrt(n)).toFixed(0)})`);
-  console.log(`中位得分: ${scores[Math.floor(n / 2)]}`);
+  // 中位数: 偶数样本取中间两个的平均 (旧写法 scores[floor(n/2)] 在偶数时会取到第 75 百分位)
+  const median = scores.length % 2 === 1
+    ? scores[(scores.length - 1) / 2]
+    : Math.round((scores[scores.length / 2 - 1] + scores[scores.length / 2]) / 2);
+  const q = (p) => scores[Math.min(scores.length - 1, Math.floor(p * scores.length))];
+  console.log(`中位得分: ${median}   (P25 ${q(0.25)} / P75 ${q(0.75)})`);
   console.log(`最低/最高: ${scores[0]} / ${scores[n - 1]}`);
   console.log(`总耗时: ${((Date.now() - t0) / 1000).toFixed(1)}s (含 ${results.reduce((a, r) => a + r.moves, 0)} 步)`);
   const avgMps = results.reduce((a, r) => a + r.movesPerSec, 0) / results.length;
