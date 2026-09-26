@@ -28,7 +28,7 @@ const ai = require('./ai');
 
 // ---------- 命令行参数 ----------
 function parseArgs() {
-  const args = { games: Infinity, speed: 30, newgame: false, profile: '.chrome-profile', guest: false, budget: 150, p4: 10, depth: 0, snake: 0, noAdaptive: false, windowSize: 'none', headless: false, browser: 'auto', webhook: null, session: null, exportSession: null, endgame: 'default', httpPort: 0, shotInterval: 0, restartDelay: 5, uploadTimeout: 60 };
+  const args = { games: Infinity, speed: 30, newgame: false, profile: '.chrome-profile', guest: false, budget: 150, p4: 10, depth: 0, snake: 0, noAdaptive: false, windowSize: 'none', headless: false, browser: 'auto', webhook: null, session: null, exportSession: null, endgame: 'default', httpPort: 0, httpHost: '127.0.0.1', shotInterval: 0, restartDelay: 5, uploadTimeout: 60 };
   const raw = process.argv.slice(2);
   for (let i = 0; i < raw.length; i++) {
     if (raw[i] === '--games') args.games = parseInt(raw[++i], 10);
@@ -49,6 +49,7 @@ function parseArgs() {
     else if (raw[i] === '--export-session') args.exportSession = raw[++i]; // 导出当前登录会话到文件
     else if (raw[i] === '--endgame') args.endgame = raw[++i];    // 后期专项优化: on | off
     else if (raw[i] === '--http-port') args.httpPort = parseInt(raw[++i], 10);        // 状态面板端口 (0=关闭)
+    else if (raw[i] === '--http-host') args.httpHost = raw[++i];                      // 状态面板监听地址 (默认 127.0.0.1; Docker 里用 0.0.0.0)
     else if (raw[i] === '--shot-interval') args.shotInterval = parseInt(raw[++i], 10); // 定时截图秒数 (0=关闭)
     else if (raw[i] === '--restart-delay') args.restartDelay = parseInt(raw[++i], 10); // 局间等待秒数 (让成绩上传完成)
     else if (raw[i] === '--upload-timeout') args.uploadTimeout = parseInt(raw[++i], 10); // 等待上传确认的最长秒数
@@ -708,6 +709,7 @@ function dashboardHtml() {
 
 function startDashboard(port) {
   const http = require('http');
+  const host = ARGS.httpHost || '127.0.0.1';
   liveServer = http.createServer(async (req, res) => {
     const url = (req.url || '/').split('?')[0];
     try {
@@ -730,8 +732,9 @@ function startDashboard(port) {
     }
   });
   liveServer.on('error', (e) => console.log(`  ⚠ 状态面板启动失败 (端口 ${port}): ${e.message}`));
-  liveServer.listen(port, '127.0.0.1', () => {
-    console.log(`  📊 实时状态面板: http://127.0.0.1:${port}   (浏览器打开即可看画面与数据)`);
+  liveServer.listen(port, host, () => {
+    const shown = host === '0.0.0.0' || host === '::' ? '0.0.0.0' : host;
+    console.log(`  📊 实时状态面板: http://${shown}:${port}   (浏览器打开即可看画面与数据)`);
   });
 }
 

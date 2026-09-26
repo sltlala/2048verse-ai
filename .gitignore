@@ -49,3 +49,9 @@ logs/
 
 # 手机版实测统计 (本地生成)
 mobile-spawn-stats.json
+
+# 登录会话文件 (含 token, 绝对不能提交!)
+session.json
+session*.json
+!.env.example
+.env

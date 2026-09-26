@@ -275,6 +275,9 @@ node run.js
 | `--guest` | 不等待登录 | 需登录 |
 | `--no-adaptive` | 关闭自适应预算，全程用满（对照实验用） | 自适应 |
 | `--profile DIR` | 浏览器数据目录 | `.chrome-profile` |
+| `--http-port N` | 实时状态面板端口（0 = 关闭） | 0 |
+| `--http-host HOST` | 状态面板监听地址（容器里用 `0.0.0.0`） | `127.0.0.1` |
+| `--shot-interval N` | 每 N 秒存一张 `results/screenshots/live.png` | 0 |
 | `--depth N` / `--snake W` | 固定搜索深度 / 蛇形权重（实验用） | 0 / 0 |
 
 示例：
@@ -643,6 +646,40 @@ ls results/screenshots/
 
 `docker-compose.yml` 已挂载两个持久化目录：`.chrome-profile`（登录态）与 `results`（数据+截图），
 容器重启不会丢数据；`restart: unless-stopped` 保证崩溃后自动拉起。
+
+#### 实时状态面板（无头模式下看画面）
+
+容器里跑 `--http-port 8765 --http-host 0.0.0.0`，`docker-compose.yml` 把它映射到宿主机端口：
+
+```bash
+# .env
+DASH_PORT=80          # 宿主机端口; 阿里云安全组默认放行 80/443, 所以直接用 80 最省事
+```
+
+`docker compose up -d` 之后浏览器打开 `http://<服务器公网IP>/` 就是实时面板
+（每 3 秒自动刷新，含棋盘截图、分数、最大方块、步/秒、深度）。三个端点：
+
+| 路径 | 内容 |
+|---|---|
+| `/` | 实时状态面板（HTML，自动刷新） |
+| `/api/status` | 最新状态 JSON（得分/步数/空格/最大方块/速度/棋盘数组） |
+| `/shot.png` | 当前游戏画面 PNG 截图（实时抓取，不落盘） |
+
+> `--http-host` 默认是 `127.0.0.1`（只本机可访问）。容器里必须显式写 `0.0.0.0`，
+> 否则 Docker 的端口映射进不来。面板没有任何鉴权，等于把游戏画面公开在公网上。
+
+#### 国内服务器构建的两个坑
+
+| 问题 | 处理 |
+|---|---|
+| 直连 Docker Hub 超时（`registry-1.docker.io` 连不上，`docker pull` 卡死） | `Dockerfile` 的基础镜像默认用国内源 `docker.1ms.run/library/node:22-bookworm-slim`（daocloud 的 `docker.m.daocloud.io` 也可）；换回官方镜像用 `--build-arg BASE_IMAGE=node:22-bookworm-slim` |
+| apt / npm / Playwright 下载慢 | Debian 源换 `mirrors.aliyun.com`、npm 源换 `registry.npmmirror.com`、浏览器二进制走 `cdn.npmmirror.com/binaries/playwright`（都在 Dockerfile 里设好了，实测整包构建 ~5 分钟） |
+
+#### 更新代码后重新部署
+
+```bash
+docker compose up -d --build     # 重新构建并滚动重启, results/ 与登录态都保留
+```
 
 ### 方式二：直接跑（Linux）
 

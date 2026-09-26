@@ -6,6 +6,10 @@ services:
     restart: unless-stopped
     environment:
       - TZ=Asia/Shanghai
+    ports:
+      # 实时状态面板: 宿主机 ${DASH_PORT} -> 容器 8765
+      # 服务器上把 DASH_PORT 设成 80 (阿里云安全组默认放行 80/443), 就能直接用 http://<公网IP>/ 打开
+      - "${DASH_PORT:-8765}:8765"
     volumes:
       # 登录态 (持久化, 避免每次重新登录)
       - ./.chrome-profile:/app/.chrome-profile
@@ -19,3 +23,5 @@ services:
       --browser chromium
       --session session.json
       --speed 30 --budget 150 --p4 10
+      --http-port 8765 --http-host 0.0.0.0
+      --shot-interval 10
