@@ -701,6 +701,36 @@ server {
 > （`docker inspect` 看到的 `172.x.x.x`）——容器每次重建 IP 都可能变，写死容器 IP 会 502。
 > 改了 `DASH_PORT` 记得同步改这里。
 
+**用域名访问（推荐）**：给面板一个独立子域名，和站点分开互不影响：
+
+```nginx
+# /etc/nginx/conf.d/20-bot2048.conf
+upstream bot2048_panel { server 127.0.0.1:8765; keepalive 16; }
+
+server {
+    listen 80;
+    server_name 2048.sltlala.top;
+    include /etc/nginx/snippets/acme.conf;      # 供 certbot webroot 验证
+    location / {
+        proxy_pass http://bot2048_panel;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 120s;
+        proxy_buffering off;
+    }
+}
+```
+
+```bash
+# 1) DNS 加一条 A 记录: 2048 -> <服务器公网IP>
+# 2) 等解析生效后申请证书(复用已有的 webroot 方式)
+certbot certonly --webroot -w /var/www/acme -d 2048.sltlala.top --non-interactive --agree-tos
+# 3) 再加一个 listen 443 ssl 的 server 块指向上面那份证书, 并让 80 跳转到 https
+```
+
+面板页面里的接口都是相对路径（`/api/status`、`/shot.png`），所以直接挂在域名根路径就能用。
+
 #### 国内服务器构建的两个坑
 
 | 问题 | 处理 |
