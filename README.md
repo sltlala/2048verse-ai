@@ -169,9 +169,10 @@ node tools/sim.js 20 30 10 --endgame=on   # 对照测试
 
 | 脚本 | 用途 |
 |---|---|
-| **`start.bat`** | 总菜单，双击后选 `1` 有头 / `2` 无头 / `3` 停止 |
+| **`start.bat`** | 总菜单，双击后选 `1` 有头 / `2` 无头 / `3` 手机 / `4` 停止 |
 | **`start-headed.bat`** | **有头模式**：显示浏览器窗口 + 页面内 HUD，前台运行，`Ctrl+C` 停止 |
 | **`start-headless.bat`** | **无头模式**：隐藏窗口后台运行，可用状态面板随时查看 |
+| **`start-mobile.bat`** | **手机模式**：用 `adb` 自动玩手机上的原生 2048 App（见下方「手机版」） |
 | **`stop.bat`** | 停止正在运行的 bot（并释放配置目录锁） |
 | `_env-setup.bat` | 公共环境检查（被上面两个启动脚本调用，通常不用直接运行） |
 | `start.sh` / `start-headless.sh` / `stop.sh` | Linux / macOS 对应版本 |
@@ -399,9 +400,10 @@ results/
 
 | 文件 | 说明 |
 |---|---|
-| `start.bat` | **总菜单**：选择有头 / 无头 / 停止 |
+| `start.bat` | **总菜单**：选择有头 / 无头 / 手机 / 停止 |
 | `start-headed.bat` | **有头模式启动**（可见窗口 + HUD，Ctrl+C 停止） |
 | `start-headless.bat` | **无头模式启动**（后台隐藏 + 状态面板 + 定时截图） |
+| `start-mobile.bat` | **手机模式启动**（自动检查 adb/设备/识别，再用 adb 玩手机 App） |
 | `stop.bat` | 停止 bot 并释放配置目录锁 |
 | `_env-setup.bat` | 公共环境检查（被两个启动脚本调用） |
 | `start.sh` / `start-headless.sh` / `stop.sh` | Linux / macOS 对应版本 |
@@ -415,7 +417,18 @@ results/
 | `tools/verify-rules.js` | 逐步比对本地引擎与网站规则是否一致 |
 | `tools/verify-hud.js` | 验证 HUD 注入是否正常（截图确认） |
 | `tools/ab-endgame.js` | 后期优化 A/B 对照实验 |
+| `tools/mobile/shot.js` | 手机截图工具（列出设备 / 屏幕分辨率） |
+| `tools/mobile/calibrate.js` | 自动定位手机棋盘矩形 + 采样每格颜色 |
+| `tools/mobile/board.js` | 手机棋盘识别（颜色→数值映射、PNG 区域解码） |
+| `tools/mobile/bot-mobile.js` | 手机自动玩主脚本（截图→识别→AI→滑动） |
+| `tools/mobile/shell.js` | 常驻 `adb shell` 通道（发滑动/点击，省进程启动） |
+| `tools/mobile/adbraw.js` | 直连 adb server 5037 端口截图（省 `adb.exe` 启动） |
+| `tools/mobile/verify-read.js` | 校验快速解码与整屏解码结果完全一致 |
+| `tools/mobile/bench-cmd.js` / `bench-shell.js` | adb 命令 / 常驻通道耗时基准 |
+| `tools/mobile/mine-palette.js` / `analyze-palette.js` | 从 APK 挖色板（备选方案，未采用） |
 | `results/` | 每局数据与结束截图（运行后生成） |
+| `mobile-shots/` | 手机截图与未知颜色样本（运行后生成） |
+| `mobile-results.jsonl` | 手机版每局结果（运行后生成） |
 | `logs/` | 无头模式运行日志（`logs/bot.log`） |
 | `stats.json` | 跨会话成绩统计 |
 | `.chrome-profile/` | 浏览器登录态（**含 Cookie，切勿分享**） |
@@ -495,21 +508,20 @@ npm install pngjs --cache .npm-cache --no-audit --no-fund
 ### 使用流程
 
 ```bash
-# ① 确认设备已连接
-adb devices -l
+# 最简单: 双击启动脚本, 会自动检查 adb / 设备 / 棋盘识别, 然后开跑
+start-mobile.bat
+start-mobile.bat --moves 300 --budget 120      # 参数直接透传
 
-# ② 抓一张游戏截图
-node tools/mobile/shot.js game1.png
-
-# ③ 校准: 自动定位棋盘 4×4 网格并采样每格颜色
-node tools/mobile/calibrate.js mobile-shots/game1.png
-
-# ④ 验证识别是否正确 (不操作手机)
-node tools/mobile/bot-mobile.js --discover
-
-# ⑤ 开始自动玩
-node tools/mobile/bot-mobile.js --moves 600 --budget 120
+# 手动流程 (需要重新校准时)
+adb devices -l                                  # ① 确认设备已连接
+node tools/mobile/shot.js game1.png             # ② 抓一张游戏截图
+node tools/mobile/calibrate.js mobile-shots/game1.png   # ③ 校准棋盘矩形与每格颜色
+node tools/mobile/bot-mobile.js --discover      # ④ 验证识别 (不操作手机)
+node tools/mobile/bot-mobile.js --moves 600     # ⑤ 开始自动玩
 ```
+
+`start-mobile.bat` 会在开跑前依次确认：`adb` 可用 → 设备已授权（`adb get-state`）→
+棋盘识别正常。识别失败会给出具体原因（游戏没打开 / 出现未知颜色 / 棋盘矩形过期）。
 
 ### 识别原理（针对大号白字做了专门处理）
 
@@ -534,16 +546,37 @@ node tools/mobile/bot-mobile.js --moves 600 --budget 120
 | 参数 | 说明 | 默认 |
 |---|---|---|
 | `--moves N` | 走 N 步后停止 | 无限 |
-| `--budget MS` | AI 每步思考时间 | 120 |
-| `--swipe-ms MS` | 滑动时长（Unity 游戏需要足够时长才识别） | 220 |
-| `--settle MS` | 滑动后等待画面稳定 | 260 |
+| `--budget MS` | AI 每步思考时间 | 80 |
+| `--swipe-ms MS` | 滑动时长（40ms 会偶尔丢，60ms 起稳定） | 60 |
+| `--settle MS` | 滑动后等待动画的时间（校验会兜底，不用留太多） | 120 |
+| `--retry N` / `--retry-wait MS` | 校验不过时的追加等待次数/间隔 | 4 / 90 |
+| `--no-restart` | 死局后退出，不自动开新局 | 自动开新局 |
+| `--shell off` | 关掉常驻 adb 通道，退回每次新起 adb.exe | 开 |
+| `--probe` | 打印每步「滑动→确认」耗时，用于调参 | — |
 | `--discover` | 只识别不操作（用于验证识别） | — |
 
-### 速度与限制
+### 速度：0.83 → 1.58 步/秒
 
-- 实测约 **0.83 步/秒**：截图 ~480ms + 识别 ~58ms + 思考 ~120ms + 等待 260ms
-- 瓶颈是 `adb screencap`（约 480ms/次），这是 Android 截图的固有开销
-- 竖屏布局下棋盘矩形固定为 `x 105..1154, y 1085..2134`；换设备或换分辨率需重新校准
+每步的耗时构成（1260×2800 实测），四项优化把单步从 ~1200ms 压到 ~630ms：
+
+| 环节 | 优化前 | 优化后 | 做法 |
+|---|---|---|---|
+| 截图 | 480ms | **282ms** | 直连 adb server 的 5037 端口，省掉每次启动 `adb.exe` 的 ~76ms；失败自动退回 `adb exec-out` |
+| 识别 | 58ms | **43ms** | 自己按 PNG 规范只反滤波并只解出棋盘矩形（`decodeRegion`），不再整屏解码 14MB |
+| 思考 | 120ms | **88ms** | `--budget 80` |
+| 滑动 | 327ms | **91ms** | 常驻 `adb shell` 通道（省 ~76ms 进程启动）+ 滑动时长 220→60ms |
+| 等待 | 260ms | **120ms** | 用精确校验替代固定长等待 |
+
+关键设计——**精确校验**：滑动后用 `ai.simulateMove` 算出「移动后、生成新方块前」的棋盘，
+要求截图结果 = 期望棋盘 + 恰好一个 2/4。校验通过才认为这一步成立，不通过就短等重试。
+因此等待时间可以压到最小而不怕画面还在动画：**40 步连续 0 次重试**。
+
+其他细节：
+
+- 每步只截一次图：滑动后的「确认截图」直接作为下一步的输入
+- 死局后自动点「重置」开新局，每局结果追加到 `mobile-results.jsonl`
+- 首次用会有 1~2 步偏慢（设备侧预览/编码预热），之后稳定
+- 棋盘矩形固定为 `x 105..1154, y 1085..2134`；换设备或换分辨率需重新校准
 
 ## 部署到服务器
 

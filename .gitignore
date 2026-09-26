@@ -37,7 +37,12 @@ _cmsg*.txt
 
 # 鎵嬫満鐗堟埅鍥句笌鏍锋湰
 mobile-shots/
+mobile-results.jsonl
 
 # 临时提交信息文件 (勿提交)
 commitmsg*.txt
 _cmsg*.txt
+
+# 运行日志目录 (被上面的注释行粘住了, 这里补一条有效规则)
+logs/
+*.log
