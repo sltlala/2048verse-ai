@@ -163,31 +163,79 @@ node sim.js 20 30 10 --endgame=on   # 对照测试
 
 ## 快速开始
 
-### 方式一：双击一键脚本（推荐）
+### 启动脚本一览
 
-直接**双击 `start.bat`**，它会自动完成：
+启动脚本按**有头 / 无头**分成独立文件，另有一个总菜单：
+
+| 脚本 | 用途 |
+|---|---|
+| **`start.bat`** | 总菜单，双击后选 `1` 有头 / `2` 无头 / `3` 停止 |
+| **`start-headed.bat`** | **有头模式**：显示浏览器窗口 + 页面内 HUD，前台运行，`Ctrl+C` 停止 |
+| **`start-headless.bat`** | **无头模式**：隐藏窗口后台运行，可用状态面板随时查看 |
+| **`stop.bat`** | 停止正在运行的 bot（并释放配置目录锁） |
+| `_env-setup.bat` | 公共环境检查（被上面两个启动脚本调用，通常不用直接运行） |
+| `start.sh` / `start-headless.sh` / `stop.sh` | Linux / macOS 对应版本 |
+
+两个启动脚本都会先自动完成环境准备：
 
 1. 检查 Node.js，缺失则用 `winget` 自动安装到 **`D:\Program_software\nodejs`**（无 winget 时给出下载链接）
 2. 检查 npm
 3. 检查 Google Chrome（脚本用系统 Chrome，无需下载浏览器内核）
 4. 安装 Node 依赖（使用项目内 `.npm-cache`，避开系统缓存权限问题）
-5. 清理上次残留的自动化 Chrome 窗口（只清理本项目的，不影响你自己的浏览器）
-6. 启动游戏
 
-> **工具安装目录**：脚本统一把工具装到 `D:\Program_software\<工具名>`（会自动创建该目录），
-> 并优先复用该目录下已有的 Node.js，因此现有环境无需重装。
-> 唯一例外是 Google Chrome —— 官方安装程序不支持自定义路径，只能装在 `C:\Program Files`。
+> **工具安装目录**：统一装到 `D:\Program_software\<工具名>`（会自动创建），并优先复用该目录下已有的 Node.js。
+> 唯一例外是 Google Chrome —— 官方安装程序不支持自定义路径。该目录可通过 `_env-setup.bat` 顶部的 `TOOLS_DIR` 修改。
 >
-> 该目录可通过脚本顶部的 `TOOLS_DIR` 变量改成你想要的位置。
+> **关于脚本语言**：`.bat` 文件刻意使用英文提示。因为 cmd.exe 解析含多字节字符（中文）的批处理文件时会
+> 出现偏移错乱，把后续行拆成乱码命令（实测过 UTF-8 与 GBK 两种编码都不稳定）。游戏日志的中文输出不受影响。
+
+### 有头模式（推荐先用它登录）
 
 ```bat
-start.bat                          REM 默认启动
-start.bat --speed 0 --budget 200   REM 更快 + 更强
-start.bat --env-check              REM 只检查环境, 不启动游戏
-start.bat --window max             REM 最大化窗口
+start-headed.bat                      REM 显示浏览器窗口 + HUD
+start-headed.bat --speed 0 --budget 200   REM 透传参数给 run.js
 ```
 
-### 方式二：手动运行
+窗口可见、页面右上角有实时 HUD、本窗口 `Ctrl+C` 即停止。**首次登录必须用有头模式**（无头没窗口可输入）。
+
+### 无头模式（后台挂机）
+
+```bat
+start-headless.bat                    REM 隐藏窗口后台运行
+```
+
+启动后固定开启两个查看通道：
+
+- **状态面板**：浏览器打开 **http://127.0.0.1:8765** —— 每 3 秒自动刷新，含实时截图、得分、决策方向、深度、速度、4×4 小棋盘
+- **定时截图**：每 10 秒写入 `results/screenshots/live.png`，随时可打开
+- **日志**：`logs/bot.log`
+- **停止**：双击 `stop.bat`
+
+无头启动器内置保护：检测到已有实例在运行会拒绝启动（避免配置目录冲突）；启动时会清理残留的自动化 Chrome 窗口。
+
+停止方式见 [`stop.bat`](#停止正在运行的-bot) 或手动命令（见下文"停止 bot"）。
+
+### 停止正在运行的 bot
+
+无头模式没有控制台可 `Ctrl+C`，用以下任一方式：
+
+```bat
+stop.bat                          REM 最简单: 双击即可
+```
+
+```powershell
+# 手动: 停 bot 进程
+Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -match 'run\.js' -and $_.CommandLine -notmatch 'dsh' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+# 再清理浏览器 (必须, 否则配置目录被占, 下次启动会失败)
+Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'chrome.exe' -and $_.CommandLine -like '*2048\.chrome-profile*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+```
+
+```powershell
+# 通用: 通过端口反查 PID
+Get-NetTCPConnection -LocalPort 8765 | Select-Object -ExpandProperty OwningProcess
+```
+
+### 方式三：手动运行
 
 ```bash
 # 1. 安装依赖 (需要本机已装 Node.js 和 Google Chrome)
@@ -351,8 +399,12 @@ results/
 
 | 文件 | 说明 |
 |---|---|
-| `start.bat` | **Windows 一键环境安装 + 启动**（双击即用） |
-| `start.sh` | Linux / macOS 一键启动 |
+| `start.bat` | **总菜单**：选择有头 / 无头 / 停止 |
+| `start-headed.bat` | **有头模式启动**（可见窗口 + HUD，Ctrl+C 停止） |
+| `start-headless.bat` | **无头模式启动**（后台隐藏 + 状态面板 + 定时截图） |
+| `stop.bat` | 停止 bot 并释放配置目录锁 |
+| `_env-setup.bat` | 公共环境检查（被两个启动脚本调用） |
+| `start.sh` / `start-headless.sh` / `stop.sh` | Linux / macOS 对应版本 |
 | `Dockerfile` / `docker-compose.yml` | 服务器容器化部署（自带 Chromium + 中文字体） |
 | `run.js` | 主脚本：浏览器控制 + HUD + 游戏循环 + 结果保存 |
 | `ai.js` | AI 引擎：Expectimax 搜索 + 启发式（可独立复用） |

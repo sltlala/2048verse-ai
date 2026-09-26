@@ -1,0 +1,19 @@
+启动脚本拆分: 有头模式 / 无头模式 独立启动
+
+新增:
+- start-headed.bat   有头模式: 可见浏览器窗口 + 页面 HUD, 前台运行, Ctrl+C 停止
+- start-headless.bat 无头模式: 隐藏窗口后台运行, 固定开启状态面板(8765)与每 10 秒
+                     定时截图, 日志写入 logs/bot.log; 内置"已有实例"保护
+- _env-setup.bat     公共环境检查(Node/npm/Chrome/依赖), 供两个启动脚本调用
+- start.bat          改为总菜单: 1 有头 / 2 无头 / 3 停止 / 0 退出
+- start-headless.sh / stop.sh  Linux/macOS 对应脚本
+
+关键实现细节(踩坑记录):
+- 后台脱离: 之前用 PowerShell -RedirectStandardOutput 把子进程输出接到管道, 启动器
+  窗口一关管道断开, Node 写日志 EPIPE 直接退出(实测日志停在 999 步且无汇总)。
+  改为让子进程自己 "> logs\bot.log 2>&1", 并用 -WindowStyle Hidden 给独立隐藏控制台;
+  实测跨调用持续运行、状态面板正常响应
+- 所有 .bat 保持纯 ASCII: 中文会让 cmd 解析出现多字节偏移错乱;
+  sleep 用 ping 而非 timeout(后者在输入重定向时报错)
+
+README 重写"快速开始": 脚本一览表、有头/无头用法、三种停止方法。
