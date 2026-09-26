@@ -678,6 +678,29 @@ DASH_PORT=8765        # 宿主机端口, 想换就改这里; 注意 80 常被 ng
 > 不想开任何端口时，用 SSH 隧道最省事（不暴露到公网）：
 > `ssh -i <密钥> -L 8765:127.0.0.1:8765 root@<IP>`，然后本机浏览器开 `http://127.0.0.1:8765/`。
 
+**如果宿主机上已经跑着 nginx**（比如宝塔面板装的），更好的做法是让它反代，不要用 bot 去抢 80：
+
+```nginx
+# /etc/nginx/conf.d/99-default.conf —— 裸 IP/未知域名兜底到面板
+server {
+    listen 80 default_server;
+    server_name _;
+    location / {
+        proxy_pass http://127.0.0.1:8765;   # 指向 docker 发布的宿主机端口
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 120s;            # 面板里 /shot.png 要实时截图, 别设太短
+    }
+}
+```
+
+这样 `http://<IP>/` 直接就是面板，端口不用额外开（80 本来就在安全组和 firewalld 里）。
+
+> 注意 `proxy_pass` 要写 **宿主机端口** `127.0.0.1:8765`，别写容器 IP
+> （`docker inspect` 看到的 `172.x.x.x`）——容器每次重建 IP 都可能变，写死容器 IP 会 502。
+> 改了 `DASH_PORT` 记得同步改这里。
+
 #### 国内服务器构建的两个坑
 
 | 问题 | 处理 |
