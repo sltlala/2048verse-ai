@@ -473,6 +473,78 @@ ke = async (...) => {
 > https://backend.2048verse.com/leaderboard/top?time=all&username=<你的用户名>&variant=4x4
 > ```
 
+## 手机版（Android 真机自动化）
+
+原生 2048 App（如 **Lite2048**，Unity 引擎）没有 `adb` 之外的接口，而且 Unity 把整个画面渲染在
+单个 SurfaceView 上——**`uiautomator` 读不到任何格子控件，必须走截图识别**。
+
+思路：**截图 → 识别 4×4 棋盘 → 复用同一个 `ai.js` 算方向 → `adb shell input swipe` 滑动**。
+AI 引擎与平台无关，手机版不需要改动任何 AI 代码。
+
+### 前置条件
+
+```bash
+# 1. adb (platform-tools) — 官方 zip 解压到 D:\Program_software\platform-tools
+# 2. 手机开启 USB 调试
+#    设置 → 关于手机 → 连点版本号 7 次 → 开发者选项 → USB 调试
+#    小米/OPPO/vivo 还需额外打开「USB 调试(安全设置)」, 否则无法模拟滑动
+# 3. pngjs (截图解码)
+npm install pngjs --cache .npm-cache --no-audit --no-fund
+```
+
+### 使用流程
+
+```bash
+# ① 确认设备已连接
+adb devices -l
+
+# ② 抓一张游戏截图
+node tools/mobile/shot.js game1.png
+
+# ③ 校准: 自动定位棋盘 4×4 网格并采样每格颜色
+node tools/mobile/calibrate.js mobile-shots/game1.png
+
+# ④ 验证识别是否正确 (不操作手机)
+node tools/mobile/bot-mobile.js --discover
+
+# ⑤ 开始自动玩
+node tools/mobile/bot-mobile.js --moves 600 --budget 120
+```
+
+### 识别原理（针对大号白字做了专门处理）
+
+格子里的数字是**白色大号字**，直接采样中心会取到笔画颜色。因此每格取**颜色众数**
+（量化到 8 的倍数抗噪）——方块底色像素远多于笔画，众数必然落在底色上。
+
+实测校准结果（Lite2048，1260×2800）：
+
+| 颜色 | 数值 | 颜色 | 数值 | 颜色 | 数值 |
+|---|---|---|---|---|---|
+| `#CDF5F4` | 空 | `#00A7F4` | 8 | `#2F5093` | 64 |
+| `#92F5F4` | 2 | `#74A0FD` | 16 | `#0442E5` | 128 |
+| `#00DCF4` | 4 | `#007AE2` | 32 | `#6155DC` | 256 |
+| | | | | `#A580EB` | 512 |
+
+> 颜色→数值映射表在 `tools/mobile/board.js` 的 `COLOR_MAP`。
+> 遇到表里没有的颜色时，脚本会**暂停并保存该格样本图**到 `mobile-shots/unknown/`，
+> 人工确认数值后补进映射表即可继续（1024/2048 等更高方块用同样方式补齐）。
+
+### 手机版参数
+
+| 参数 | 说明 | 默认 |
+|---|---|---|
+| `--moves N` | 走 N 步后停止 | 无限 |
+| `--budget MS` | AI 每步思考时间 | 120 |
+| `--swipe-ms MS` | 滑动时长（Unity 游戏需要足够时长才识别） | 220 |
+| `--settle MS` | 滑动后等待画面稳定 | 260 |
+| `--discover` | 只识别不操作（用于验证识别） | — |
+
+### 速度与限制
+
+- 实测约 **0.83 步/秒**：截图 ~480ms + 识别 ~58ms + 思考 ~120ms + 等待 260ms
+- 瓶颈是 `adb screencap`（约 480ms/次），这是 Android 截图的固有开销
+- 竖屏布局下棋盘矩形固定为 `x 105..1154, y 1085..2134`；换设备或换分辨率需重新校准
+
 ## 部署到服务器
 
 完全支持。服务器上没有显示器，用**无头模式**运行，截图与数据照常保存。
