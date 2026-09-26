@@ -8,8 +8,9 @@ services:
       - TZ=Asia/Shanghai
     ports:
       # 实时状态面板: 宿主机 ${DASH_PORT} -> 容器 8765
-      # 服务器上把 DASH_PORT 设成 80 (阿里云安全组默认放行 80/443), 就能直接用 http://<公网IP>/ 打开
-      - "${DASH_PORT:-8765}:8765"
+      # 默认只绑回环(127.0.0.1): 公网直连不了, 对外统一走 nginx 反代(推荐, 见 README)。
+      # 需要不经 nginx 直接访问时, 把这行的 "127.0.0.1:" 去掉即可(那就要自己管安全组/防火墙和鉴权)。
+      - "127.0.0.1:${DASH_PORT:-8765}:8765"
     volumes:
       # 登录态 (持久化, 避免每次重新登录)
       - ./.chrome-profile:/app/.chrome-profile
