@@ -28,7 +28,7 @@ const ai = require('./ai');
 
 // ---------- 命令行参数 ----------
 function parseArgs() {
-  const args = { games: Infinity, speed: 30, newgame: false, profile: '.chrome-profile', guest: false, budget: 150, p4: 10, depth: 0, snake: 0, noAdaptive: false, windowSize: 'none', headless: false, browser: 'auto', webhook: null, session: null, exportSession: null, endgame: 'default', httpPort: 0, shotInterval: 0, restartDelay: 5 };
+  const args = { games: Infinity, speed: 30, newgame: false, profile: '.chrome-profile', guest: false, budget: 150, p4: 10, depth: 0, snake: 0, noAdaptive: false, windowSize: 'none', headless: false, browser: 'auto', webhook: null, session: null, exportSession: null, endgame: 'default', httpPort: 0, shotInterval: 0, restartDelay: 5, uploadTimeout: 60 };
   const raw = process.argv.slice(2);
   for (let i = 0; i < raw.length; i++) {
     if (raw[i] === '--games') args.games = parseInt(raw[++i], 10);
@@ -51,6 +51,7 @@ function parseArgs() {
     else if (raw[i] === '--http-port') args.httpPort = parseInt(raw[++i], 10);        // 状态面板端口 (0=关闭)
     else if (raw[i] === '--shot-interval') args.shotInterval = parseInt(raw[++i], 10); // 定时截图秒数 (0=关闭)
     else if (raw[i] === '--restart-delay') args.restartDelay = parseInt(raw[++i], 10); // 局间等待秒数 (让成绩上传完成)
+    else if (raw[i] === '--upload-timeout') args.uploadTimeout = parseInt(raw[++i], 10); // 等待上传确认的最长秒数
     else if (raw[i] === '--selftest-nav') args.selftestNav = true; // 内部测试: 模拟登录跳转
   }
   return args;
@@ -131,11 +132,12 @@ function loadHistory() {
   return [];
 }
 
-// ---------- 单局结果保存 (数据 + 结束截图) ----------
+// ---------- 单局结果保存 (两阶段: 先抓画面, 上传校验后再写盘) ----------
 // 命名规则: <分数>_<时间点>.png  例: 386636_2026-09-25_18-30-45.png
 let lastSavedGameId = null;
 
-async function saveGameResult(page, result, gameNo, label = 'gameover') {
+// 阶段一: 抓终局画面 + 状态 (不写盘, 因为上传校验还没做)
+async function captureGameResult(page, result, gameNo, label = 'gameover') {
   ensureDirs();
   const endTime = new Date();
   const state = await readState(page);
@@ -147,79 +149,76 @@ async function saveGameResult(page, result, gameNo, label = 'gameover') {
   const tileSum = board.reduce((a, b) => a + b, 0) || (state && state.tileSum) || 0;
   const maxTile = board.length ? Math.max(...board) : result.maxTile;
   const fourSpawnPct = moves > 0 ? +(fourSpawns / moves * 100).toFixed(2) : null;
-
   const stamp = tsCompact(endTime);
   const base = `${score}_${stamp}`;
   const shotPath = path.join(SHOTS_DIR, `${base}.png`);
 
   let shotOk = false;
-  try {
-    await page.screenshot({ path: shotPath });
-    shotOk = true;
-  } catch (e) { console.log('  ⚠ 截图失败: ' + e.message.split('\n')[0]); }
+  try { await page.screenshot({ path: shotPath }); shotOk = true; }
+  catch (e) { console.log('  ⚠ 截图失败: ' + e.message.split('\n')[0]); }
 
-  // 网站侧校验: 本局分数是否已被服务器接受 (服务器只保留历史最高)
-  const siteScore = state ? state.siteScore : null;
-  const siteBest = state ? state.siteBest : null;
-  let uploaded = null;
-  if (siteBest !== null && score > 0) {
-    uploaded = siteBest >= score;
-    if (!uploaded) {
-      console.log(`  ⚠️ 网站最高分仍为 ${fmt(siteBest)}, 本局 ${fmt(score)} 未体现在服务器上!`);
-      console.log(`     (可能上传未完成或被打断 — 建议放慢重开速度, 见 --restart-delay)`);
-    } else {
-      console.log(`  ✅ 网站最高分已更新为 ${fmt(siteBest)}`);
-    }
-  }
-
-  const record = {
-    gameNo,
-    label,                                  // gameover / interrupted
-    endTime: endTime.toISOString(),
-    endTimeLocal: stamp,
-    score,                                  // 总分数
-    tileSum,                                // 棋盘所有方块数值之和
-    moves,                                  // 步数
-    fourSpawns,                             // 生成 4 的次数
-    fourSpawnPct,                           // 生成 4 的百分比
-    maxTile,                                // 最大方块
+  if (state && state.gameId) lastSavedGameId = state.gameId;
+  return {
+    endTime, stamp, base, shotPath, shotOk,
+    score, moves, fourSpawns, tileSum, maxTile, fourSpawnPct, board, state,
+    gameNo, label,
+    siteScore: state ? state.siteScore : null,
+    siteBest: state ? state.siteBest : null,
     durationMin: result.durationMin || null,
     gameId: state ? state.gameId : null,
-    board,
-    screenshot: shotOk ? path.relative(__dirname, shotPath).replace(/\\/g, '/') : null,
-    siteScore,            // 网站页面上的"分数"
-    siteBest,             // 网站页面上的"最高分" (服务器侧历史最高)
-    uploaded,             // 本局是否已体现在服务器最高分上
+  };
+}
+
+// 阶段二: 上传校验完成后一次性写盘 (含 upload 字段)
+async function writeGameResult(cap, uploadInfo) {
+  const rec = {
+    gameNo: cap.gameNo,
+    label: cap.label,
+    endTime: cap.endTime.toISOString(),
+    endTimeLocal: cap.stamp,
+    score: cap.score,
+    tileSum: cap.tileSum,
+    moves: cap.moves,
+    fourSpawns: cap.fourSpawns,
+    fourSpawnPct: cap.fourSpawnPct,
+    maxTile: cap.maxTile,
+    durationMin: cap.durationMin,
+    gameId: cap.gameId,
+    board: cap.board,
+    screenshot: cap.shotOk ? path.relative(__dirname, cap.shotPath).replace(/\\/g, '/') : null,
+    siteScore: cap.siteScore,
+    siteBest: cap.siteBest,
+    upload: uploadInfo ? (uploadInfo.ok ? 'ok' : 'failed') : 'guest',  // 服务器是否确认接收
+    uploadWaitedMs: uploadInfo ? uploadInfo.waitedMs : null,
+    serverBestAfter: uploadInfo ? uploadInfo.hs : null,
+    rankAfter: uploadInfo ? uploadInfo.rank : null,
     config: { fourRate: ARGS.p4, budgetMs: ARGS.budget, fixedDepth: ARGS.depth, snakeWeight: ARGS.snake, speedMs: ARGS.speed, adaptive: !ARGS.noAdaptive, endgame: ARGS.endgame },
   };
-  if (state && state.gameId) lastSavedGameId = state.gameId;
-
-  // 1) 追加 JSONL (每行一条, 方便后续分析)
-  try { fs.appendFileSync(JSONL_FILE, JSON.stringify(record) + '\n'); } catch (e) { console.log('  ⚠ JSONL 写入失败: ' + e.message); }
-  // 2) 维护 history.json (数组形式; 若损坏会自动从 jsonl 重建)
+  try { fs.appendFileSync(JSONL_FILE, JSON.stringify(rec) + '\n'); } catch (e) { console.log('  ⚠ JSONL 写入失败: ' + e.message); }
   try {
     const hist = loadHistory();
-    hist.push(record);
+    hist.push(rec);
     fs.writeFileSync(HISTORY_FILE, JSON.stringify(hist, null, 2));
   } catch (e) { console.log('  ⚠ history 写入失败: ' + e.message); }
 
-  console.log(`  💾 已保存: results/screenshots/${base}.png`);
-  console.log(`     分数 ${fmt(score)} | Tile Sum ${fmt(tileSum)} | Moves ${moves} | 生成4率 ${fourSpawnPct}% | 最大 ${maxTile}`);
+  console.log(`  💾 已保存: results/screenshots/${cap.base}.png`);
+  console.log(`     分数 ${fmt(cap.score)} | Tile Sum ${fmt(cap.tileSum)} | Moves ${cap.moves} | 生成4率 ${cap.fourSpawnPct}% | 最大 ${cap.maxTile}`);
 
-  // 可选: POST 到 webhook (服务器部署时可用来推送通知/入库)
   if (ARGS.webhook) {
     try {
       const res = await fetch(ARGS.webhook, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(record),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rec),
       });
       console.log(`     ↪ webhook: HTTP ${res.status}`);
-    } catch (e) {
-      console.log('     ⚠ webhook 推送失败: ' + e.message.split('\n')[0]);
-    }
+    } catch (e) { console.log('     ⚠ webhook 推送失败: ' + e.message.split('\n')[0]); }
   }
-  return record;
+  return rec;
+}
+
+// 兼容入口: 抓取 + 写盘 (供 interrupted 快照等无需校验的场景使用)
+async function saveGameResult(page, result, gameNo, label = 'gameover') {
+  const cap = await captureGameResult(page, result, gameNo, label);
+  return writeGameResult(cap, undefined);
 }
 
 // ---------- 页面状态读取 + HUD 刷新 (合并为一次页面往返, 省一半 CDP 通信) ----------
@@ -873,6 +872,67 @@ async function applySession(context, file, page) {
   }
 }
 
+// ---------- 成绩上传校验 + 刷新排名 ----------
+// 网站机制(源码分析):
+//   死局那一刻 POST /games/upload (gzip), 仅登录用户, 失败只弹 alert, 无重试
+//   排行榜接口返回 hs 字段 = 服务器侧本人最高分, 可用来校验
+// 因此: 局末先等上传落地, 确认后再刷新页面看最新排名, 然后才开下一局
+const API_BASE = 'https://backend.2048verse.com';
+let uploadAlertSeen = false;   // 网站弹出"记录失败"提示时置位
+
+async function getAccount(page) {
+  return safeEval(page, () => {
+    try { return localStorage.getItem('username') || null; } catch { return null; }
+  });
+}
+
+// 查询服务器侧本人最高分 (通过排行榜接口的 hs 字段)
+async function fetchServerHighScore(account) {
+  if (!account) return null;
+  try {
+    const url = `${API_BASE}/leaderboard/top?time=all&username=${encodeURIComponent(account)}&variant=4x4`;
+    const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    if (!res.ok) return null;
+    const j = await res.json();
+    if (typeof j.hs === 'number') return { hs: j.hs, rank: j.rank ?? null };
+    const mine = (j.leaderboard || []).find(e => e.username === account);
+    return mine ? { hs: mine.score, rank: j.rank ?? null } : { hs: null, rank: j.rank ?? null };
+  } catch { return null; }
+}
+
+// 等上传落地; 返回 {ok, hs, rank, waitedMs, alerted}
+async function waitForUpload(account, score, timeoutSec = 60) {
+  const t0 = Date.now();
+  let last = null;
+  while (Date.now() - t0 < timeoutSec * 1000) {
+    last = await fetchServerHighScore(account);
+    if (last && last.hs !== null && last.hs >= score) {
+      return { ok: true, hs: last.hs, rank: last.rank, waitedMs: Date.now() - t0, alerted: uploadAlertSeen };
+    }
+    if (uploadAlertSeen) break;           // 网站已明确报错, 不必再等
+    await sleep(2000);
+  }
+  return { ok: false, hs: last ? last.hs : null, rank: last ? last.rank : null, waitedMs: Date.now() - t0, alerted: uploadAlertSeen };
+}
+
+// 刷新页面让排名/HUD 显示最新数据
+async function refreshRanking(page, account) {
+  try {
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('#board-4x4', { timeout: 20000 }).catch(() => { });
+    await sleep(2500);   // 等排行榜接口返回
+    const info = await fetchServerHighScore(account);
+    const shown = await safeEval(page, () => {
+      const el = Array.from(document.querySelectorAll('.info-display'))
+        .find(e => /最高分/.test(e.querySelector('.info-label')?.textContent || ''));
+      return el ? parseInt((el.querySelector('.info-value')?.textContent || '').replace(/[^\d]/g, ''), 10) : null;
+    });
+    return { serverHs: info ? info.hs : null, rank: info ? info.rank : null, pageShownBest: shown };
+  } catch (e) {
+    return { error: e.message.split('\n')[0] };
+  }
+}
+
 // ---------- 浏览器启动 ----------
 // 优先用系统 Chrome; 服务器上没有 Chrome 时自动回退到 Playwright 自带 Chromium
 // (需先执行 npx playwright install --with-deps chromium)
@@ -987,7 +1047,17 @@ function scheduleSelfTestNav(page) {
     await applyWindowSize(browser, ARGS.windowSize);
   }
   browser.on('disconnected', () => { browserDisconnected = true; });
-  browser.on('dialog', d => d.accept().catch(() => { }));
+  // 弹窗处理: 不再静默吞掉 —— 网站上传失败时会弹 alert, 必须识别出来
+  browser.on('dialog', async (d) => {
+    const msg = d.message() || '';
+    if (/error logging your game|error.*log.*game/i.test(msg)) {
+      uploadAlertSeen = true;
+      console.log('  ⚠️ 网站提示"记录上传失败": ' + msg.slice(0, 160));
+    } else if (msg.length < 200) {
+      console.log('  ℹ 页面弹窗: ' + msg.replace(/\n/g, ' ').slice(0, 160));
+    }
+    await d.accept().catch(() => { });
+  });
 
   let page = browser.pages()[0] || await browser.newPage();
   page.setDefaultTimeout(30000);
@@ -1093,11 +1163,49 @@ function scheduleSelfTestNav(page) {
 
     setLiveStatus({ status: `本局结束 (${fmt(result.score)} 分)`, lastResult: `${fmt(result.score)} 分 / 最大 ${result.maxTile} / ${result.moves} 步 @ ${new Date().toLocaleTimeString('zh-CN')}` });
 
-    // 保存本局数据 + 结束截图 (必须在开新局之前, 否则局面被重置)
+    // 1) 先抓终局画面与数据 (必须在刷新/开新局之前, 否则画面没了)
+    uploadAlertSeen = false;
+    let cap = null;
     try {
-      await saveGameResult(page, result, gameNo, 'gameover');
+      cap = await captureGameResult(page, result, gameNo, 'gameover');
     } catch (e) {
-      console.log('  ⚠ 结果保存异常: ' + e.message.split('\n')[0]);
+      console.log('  ⚠ 终局抓取异常: ' + e.message.split('\n')[0]);
+    }
+
+    // 2) 确认成绩已上传网站, 并刷新页面看最新排名
+    const account = await getAccount(page);
+    let uploadInfo = null;
+    if (cap && account) {
+      console.log(`  等待网站成绩上传 (账号 ${account}, 本局 ${fmt(cap.score)})...`);
+      uploadInfo = await waitForUpload(account, cap.score, ARGS.uploadTimeout);
+      if (uploadInfo.ok) {
+        console.log(`  ✅ 上传成功: 服务器最高分 ${fmt(uploadInfo.hs)}` +
+          (uploadInfo.rank ? `, 当前排名 #${uploadInfo.rank}` : '') +
+          ` (等待 ${(uploadInfo.waitedMs / 1000).toFixed(0)}s)`);
+      } else {
+        console.log('  ❌ 上传未确认!');
+        console.log(`     服务器最高分: ${uploadInfo.hs === null ? '查询失败(网络)' : fmt(uploadInfo.hs)} | 本局 ${fmt(cap.score)}`);
+        if (uploadInfo.alerted) console.log('     网站已弹出"记录上传失败"提示 → 该对局未被服务器接收');
+        console.log('     截图与数据已存档, 可凭截图到官方 Discord 申请手动补录');
+      }
+      // 刷新页面, 让排行榜/最高分显示最新数据
+      const r = await refreshRanking(page, account);
+      if (r && !r.error) {
+        console.log(`  🔄 页面已刷新: 服务器最高分 ${fmt(r.serverHs)}` +
+          (r.rank ? ` | 排名 #${r.rank}` : '') +
+          ` | 页面显示最高分 ${fmt(r.pageShownBest)}`);
+        setLiveStatus({ rank: r.rank, serverBest: r.serverHs });
+      } else if (r && r.error) {
+        console.log('  ⚠ 刷新页面异常: ' + r.error);
+      }
+    } else if (cap && !account) {
+      console.log('  ℹ 未检测到登录账号, 网站不会上传成绩 (游客局)');
+    }
+
+    // 3) 上传结论与对局数据一次性写盘
+    if (cap) {
+      try { await writeGameResult(cap, uploadInfo); }
+      catch (e) { console.log('  ⚠ 结果写盘异常: ' + e.message.split('\n')[0]); }
     }
 
     // 更新统计
