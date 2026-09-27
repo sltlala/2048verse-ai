@@ -700,6 +700,21 @@ DASH_PORT=8765        # 宿主机端口, 想换就改这里; 注意 80 常被 ng
 > 不想开任何端口时，用 SSH 隧道最省事（不暴露到公网）：
 > `ssh -i <密钥> -L 8765:127.0.0.1:8765 root@<IP>`，然后本机浏览器开 `http://127.0.0.1:8765/`。
 
+#### 机器人停止时显示静态状态页（而不是 502）
+
+容器一停，`/` 就没有上游了，nginx 会返回 502。想在这种情况下也能看到有用信息
+（最后成绩、停止时的对局、重启命令、最后一张截图），可以把站点换成静态页：
+
+| 位置 | 内容 |
+|---|---|
+| `/var/www/bot2048/index.html` | 静态状态页（仓库里是 `web/stopped.html`） |
+| `/var/www/bot2048/last.png` | 停止前最后一张 `results/screenshots/live.png` |
+| `/etc/nginx/conf.d/20-bot2048.conf` | `location /` 用 `root /var/www/bot2048; try_files …`（仓库里是 `web/20-bot2048.static.conf`） |
+| `/etc/nginx/conf.d/99-default.conf` | 裸 IP 的 default_server 同样指向静态页 |
+
+**恢复到实时面板**：把 `location /` 换回 `proxy_pass http://bot2048_panel;`（同时把 99-default 那段改回反代）
+然后 `nginx -t && systemctl reload nginx`。停止前记得先 `docker compose stop`，否则两个状态会打架。
+
 **如果宿主机上已经跑着 nginx**（比如宝塔面板装的），更好的做法是让它反代，不要用 bot 去抢 80：
 
 ```nginx
