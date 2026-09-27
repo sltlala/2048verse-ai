@@ -647,6 +647,18 @@ ls results/screenshots/
 `docker-compose.yml` 已挂载两个持久化目录：`.chrome-profile`（登录态）与 `results`（数据+截图），
 容器重启不会丢数据；`restart: unless-stopped` 保证崩溃后自动拉起。
 
+**服务器上默认用慢节奏跑**（`docker-compose.yml` 里的 command）：
+
+| 参数 | 值 | 作用 | 代价 |
+|---|---|---|---|
+| `--budget` | **300ms**（原 150） | 思考预算加倍，**算得更深、打得更强** | 无（只是更吃 CPU） |
+| `--speed` | **150ms**（原 30） | 每步基础延迟，实测约 **2.0~2.5 步/秒**（原来 5~12） | 整局时间 ×2.5 左右，20k 步的局约 2~3 小时 |
+| `--p4` | 10 | 生成 4 的概率（实测约 10%） | — |
+
+> 想更快就 `sed -i 's/--speed 150/--speed 30/' docker-compose.yml && docker compose up -d`；
+> 想更深就把 `--budget` 调到 500~800（关键期会自适应放大到 1.5 倍）。
+> 预算的实际取值是按空格数自适应的：空格多时按 0.25 倍跑（前期快），空格少时按 1.5 倍跑（关键期深算）。
+
 #### 实时状态面板（无头模式下看画面）
 
 容器里跑 `--http-port 8765 --http-host 0.0.0.0`，`docker-compose.yml` 把它映射到宿主机端口：

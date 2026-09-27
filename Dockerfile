@@ -44,7 +44,8 @@ ENV HEADLESS=1
 
 # --browser chromium: 用镜像内的 Chromium; 若挂载了系统 Chrome 可用 auto
 # 不加 --newgame: 重启时接着玩持久化 profile 里的那一局 (局末才上传成绩)
+# --speed 150 --budget 300: 节奏放慢(约 2 步/秒), 思考预算加倍(算得更深)
 # --http-port 8765 --http-host 0.0.0.0: 实时状态面板 (docker-compose 里映射到宿主机)
 CMD ["node", "run.js", "--headless", "--browser", "chromium", "--session", "session.json", \
-     "--speed", "30", "--budget", "150", "--p4", "10", \
+     "--speed", "150", "--budget", "300", "--p4", "10", \
      "--http-port", "8765", "--http-host", "0.0.0.0", "--shot-interval", "10"]

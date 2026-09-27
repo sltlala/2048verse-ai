@@ -21,10 +21,12 @@ services:
     # 想改参数直接覆盖 command
     # 注意: 这里故意不加 --newgame —— 重启时接着玩持久化 profile 里的那一局,
     #       而不是把正在跑的局丢掉(局末才会上传成绩, 丢掉就等于白玩)
+    # 节奏: --speed 150(每步基础延迟, 原来 30) + --budget 300(思考预算, 原来 150)
+    #       实测约 2.0~2.5 步/秒; 预算调大是纯赚(算得更深), 延迟调大只是让整局跑得更久
     command: >
       node run.js --headless
       --browser chromium
       --session session.json
-      --speed 30 --budget 150 --p4 10
+      --speed 150 --budget 300 --p4 10
       --http-port 8765 --http-host 0.0.0.0
       --shot-interval 10
