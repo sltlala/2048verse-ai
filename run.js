@@ -697,6 +697,8 @@ function dashboardHtml() {
   <div class="kv"><span>搜索深度 / 耗时 / 预算</span><b>${s.depth ?? '–'} / ${s.timeMs ?? '–'}ms / ${s.budget ?? '–'}ms</b></div>
   <div class="kv"><span>速度</span><b>${s.mps || '–'} 步/秒</b></div>
   <div class="kv"><span>局数 / 历史最佳</span><b>${fmtN(s.gameNo)} / ${fmtN(s.best)}</b></div>
+  ${s.serverBest ? `<div class="kv"><span>排行榜（服务器）</span><b>${s.rank ? '#' + s.rank + ' · ' : ''}${fmtN(s.serverBest)}</b></div>` : ''}
+  ${s.upload ? `<div class="kv"><span>上一局成绩上传</span><b>${s.upload}</b></div>` : ''}
   <div class="muted" style="margin-top:6px">最近一局：${s.lastResult || '暂无'}</div>
 </div>
 <div class="card">当前盘面<div class="grid">${grid}</div></div>
@@ -1177,6 +1179,12 @@ function scheduleSelfTestNav(page) {
   if (acc0) {
     console.log(`  👤 登录账号: ${acc0}  (成绩由网站自分在死局时上传, 下面会记录上传请求与返回码)`);
     setLiveStatus({ account: acc0 });
+    // 启动就先拉一次排行榜, 面板上马上能看到当前榜位
+    const hb0 = await fetchServerHighScore(acc0);
+    if (hb0 && hb0.hs !== null) {
+      console.log(`  🏆 服务器侧最高分 ${fmt(hb0.hs)}${hb0.rank ? `, 当前排名 #${hb0.rank}` : ''}`);
+      setLiveStatus({ rank: hb0.rank, serverBest: hb0.hs });
+    }
   } else {
     console.log('  ⚠ 未识别到登录账号 → 网站不会上传成绩 (游客局), 请检查 session.json / 登录态是否过期');
   }
