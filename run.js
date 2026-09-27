@@ -184,6 +184,7 @@ async function captureGameResult(page, result, gameNo, label = 'gameover') {
     siteBest: state ? state.siteBest : null,
     durationMin: result.durationMin || null,
     gameId: state ? state.gameId : null,
+    resumed: resumedFromRestart,
   };
 }
 
@@ -202,6 +203,7 @@ async function writeGameResult(cap, uploadInfo) {
     maxTile: cap.maxTile,
     durationMin: cap.durationMin,
     gameId: cap.gameId,
+    resumed: cap.resumed === true,   // 这局是否"重启后接着玩的": 用来验证"被后端剔除的对局是否都是中断过的"
     board: cap.board,
     screenshot: cap.shotOk ? path.relative(__dirname, cap.shotPath).replace(/\\/g, '/') : null,
     siteScore: cap.siteScore,
@@ -909,6 +911,7 @@ let uploadAlertSeen = false;   // 网站弹出"记录失败"提示时置位
 let lastUploadReq = null;      // 网站发出的那次 /games/upload (url + 原始 body), 用于失败时由 Node 侧重发
 let lastUploadStatus = null;   // 该请求的返回码
 let bestSeenOnServer = null;   // 我们在服务器排行榜上见过的最高分 (用来发现"上榜后又被删")
+let resumedFromRestart = false; // 当前这局是不是"容器重启后接着玩的"
 
 async function getAccount(page) {
   return safeEval(page, () => {
@@ -1246,6 +1249,22 @@ function scheduleSelfTestNav(page) {
   if (ARGS.shotInterval > 0) startPeriodicShot(page, ARGS.shotInterval);
   setLiveStatus({ status: '准备开始', gameNo: 0, best: localBest, bestTileLocal: localTile });
 
+  // 这局是不是"上次容器重启时正在进行的对局"? 网站会把局面存在 localStorage 里,
+  // 分数>0 就说明是接着玩的。记进 results.jsonl, 用来验证"被网站剔除的对局是否都是中断过的"。
+  const stored = await safeEval(page, () => {
+    try {
+      const raw = localStorage.getItem('gameState4x4');
+      if (!raw) return null;
+      const s = JSON.parse(raw);
+      return { score: s.score || 0, moves: s.moves || 0, gameId: s.gameId || null };
+    } catch { return null; }
+  });
+  if (stored && stored.score > 0) {
+    resumedFromRestart = true;
+    console.log(`  ℹ 检测到正在进行的对局 (分数 ${fmt(stored.score)}, ${stored.moves} 步) —— 这局是重启后接着玩的,` +
+      ` 记录里会标 resumed=true\n`);
+  }
+
   // 开新局 (可选) 或接着当前局面
   if (ARGS.newgame) await startNewGame(page);
 
@@ -1297,6 +1316,7 @@ function scheduleSelfTestNav(page) {
 
     consecutiveErrors = 0;
     completedGames++;
+    resumedFromRestart = false;   // 下一局一定是全新的, 不带"重启续玩"标记
 
     setLiveStatus({ status: `本局结束 (${fmt(result.score)} 分)`, lastResult: `${fmt(result.score)} 分 / 最大 ${result.maxTile} / ${result.moves} 步 @ ${new Date().toLocaleTimeString('zh-CN')}` });
 
