@@ -103,6 +103,23 @@ function loadStats() {
   try { return JSON.parse(fs.readFileSync(STATS_FILE, 'utf8')); } catch { }
   return { bestScore: 0, bestTile: 0, games: 0, totalScore: 0 };
 }
+// 从 results.jsonl 里取真实最高分: 容器重建会丢掉 stats.json, 而且网站可能把已上榜的成绩删掉,
+// 所以"脚本自己记录的最佳"要以这份持久化的对局记录为准
+function bestFromResults() {
+  try {
+    const lines = fs.readFileSync(JSONL_FILE, 'utf8').split(/\r?\n/).filter(Boolean);
+    let best = 0, tile = 0, n = 0;
+    for (const l of lines) {
+      try {
+        const r = JSON.parse(l);
+        if (typeof r.score === 'number' && r.score > best) best = r.score;
+        if (typeof r.maxTile === 'number' && r.maxTile > tile) tile = r.maxTile;
+        n++;
+      } catch { }
+    }
+    return { best, tile, games: n };
+  } catch { return { best: 0, tile: 0, games: 0 }; }
+}
 function saveStats(s) {
   try { fs.writeFileSync(STATS_FILE, JSON.stringify(s, null, 2)); } catch (e) { console.error('统计保存失败:', e.message); }
 }
@@ -696,7 +713,7 @@ function dashboardHtml() {
   <div class="kv"><span>当前决策</span><b style="font-size:22px">${arrow} ${s.dirName || ''}</b></div>
   <div class="kv"><span>搜索深度 / 耗时 / 预算</span><b>${s.depth ?? '–'} / ${s.timeMs ?? '–'}ms / ${s.budget ?? '–'}ms</b></div>
   <div class="kv"><span>速度</span><b>${s.mps || '–'} 步/秒</b></div>
-  <div class="kv"><span>局数 / 历史最佳</span><b>${fmtN(s.gameNo)} / ${fmtN(s.best)}</b></div>
+  <div class="kv"><span>脚本记录最佳</span><b>${fmtN(s.best)}</b></div>
   ${s.serverBest ? `<div class="kv"><span>排行榜（服务器）</span><b>${s.rank ? '#' + s.rank + ' · ' : ''}${fmtN(s.serverBest)}</b></div>` : ''}
   ${s.upload ? `<div class="kv"><span>上一局成绩上传</span><b>${s.upload}</b></div>` : ''}
   <div class="muted" style="margin-top:6px">最近一局：${s.lastResult || '暂无'}</div>
@@ -891,6 +908,7 @@ const API_BASE = 'https://backend.2048verse.com';
 let uploadAlertSeen = false;   // 网站弹出"记录失败"提示时置位
 let lastUploadReq = null;      // 网站发出的那次 /games/upload (url + 原始 body), 用于失败时由 Node 侧重发
 let lastUploadStatus = null;   // 该请求的返回码
+let bestSeenOnServer = null;   // 我们在服务器排行榜上见过的最高分 (用来发现"上榜后又被删")
 
 async function getAccount(page) {
   return safeEval(page, () => {
@@ -1209,13 +1227,24 @@ function scheduleSelfTestNav(page) {
     console.log('⚠  HUD 注入失败 (页面可能未就绪, 游戏循环中会自动重试)');
   }
   const stats = loadStats();
-  console.log(`\n历史最佳: ${fmt(stats.bestScore)} (共 ${stats.games} 局)\n`);
+  // "脚本记录最佳"取 stats 与 results.jsonl 的较大者: 容器重建会丢 stats.json,
+  // 而 results.jsonl 是挂载出来的持久记录, 里面还有被网站删掉的高分对局
+  const rb = bestFromResults();
+  const localBest = Math.max(stats.bestScore || 0, rb.best);
+  const localTile = Math.max(stats.bestTile || 0, rb.tile);
+  // 把 results.jsonl 里的最佳回填进 stats: 容器重建会丢 stats.json, 回填后
+  // HUD/面板里的 "best" 才不会退化成"当前这一局的分数"
+  stats.bestScore = localBest;
+  stats.bestTile = localTile;
+  stats.games = Math.max(stats.games || 0, rb.games);
+  saveStats(stats);
+  console.log(`\n脚本记录最佳: ${fmt(localBest)} (最大方块 ${fmt(localTile)}, 历史 ${rb.games} 局)\n`);
 
   // 实时查看: HTTP 状态面板 + 定时截图 (无头模式尤其有用)
   livePage = page;
   if (ARGS.httpPort > 0) startDashboard(ARGS.httpPort);
   if (ARGS.shotInterval > 0) startPeriodicShot(page, ARGS.shotInterval);
-  setLiveStatus({ status: '准备开始', gameNo: 0, best: stats.bestScore });
+  setLiveStatus({ status: '准备开始', gameNo: 0, best: localBest, bestTileLocal: localTile });
 
   // 开新局 (可选) 或接着当前局面
   if (ARGS.newgame) await startNewGame(page);
@@ -1234,6 +1263,16 @@ function scheduleSelfTestNav(page) {
       const hb = await fetchServerHighScore(acc0);
       if (hb) hsBefore = hb.hs;
       console.log(`  开局前服务器最高分: ${hsBefore === null ? '(查询失败)' : fmt(hsBefore)}`);
+      // 网站有时会把已上榜的成绩清掉/回滚, 这里盯住: 榜上最高分比我们见过的还低就报警
+      if (hsBefore !== null) {
+        if (bestSeenOnServer !== null && hsBefore < bestSeenOnServer) {
+          console.log(`  ⚠ 排行榜上的最高分从 ${fmt(bestSeenOnServer)} 掉回 ${fmt(hsBefore)}` +
+            ` —— 网站把已上榜的成绩删掉了/榜单回滚了 (成绩上传没问题, 是网站侧的事)`);
+          setLiveStatus({ upload: `⚠ 网站删掉了 ${fmt(bestSeenOnServer)}` });
+        }
+        if (bestSeenOnServer === null || hsBefore > bestSeenOnServer) bestSeenOnServer = hsBefore;
+        setLiveStatus({ rank: hb ? hb.rank : null, serverBest: hsBefore });
+      }
     }
     uploadAlertSeen = false; lastUploadStatus = null; lastUploadReq = null;
     let result;
