@@ -887,10 +887,18 @@ async function applySession(context, file, page) {
 // 因此: 局末先等上传落地, 确认后再刷新页面看最新排名, 然后才开下一局
 const API_BASE = 'https://backend.2048verse.com';
 let uploadAlertSeen = false;   // 网站弹出"记录失败"提示时置位
+let lastUploadReq = null;      // 网站发出的那次 /games/upload (url + 原始 body), 用于失败时由 Node 侧重发
+let lastUploadStatus = null;   // 该请求的返回码
 
 async function getAccount(page) {
   return safeEval(page, () => {
-    try { return localStorage.getItem('username') || null; } catch { return null; }
+    try {
+      // 网站把用户名放在 cookie 里, localStorage 里不一定有 —— 三处都试一遍
+      const ls = localStorage.getItem('username') || sessionStorage.getItem('username');
+      if (ls) return ls;
+      const m = document.cookie.match(/(?:^|;\s*)username=([^;]+)/);
+      return m ? decodeURIComponent(m[1]) : null;
+    } catch { return null; }
   });
 }
 
@@ -921,6 +929,40 @@ async function waitForUpload(account, score, timeoutSec = 60) {
     await sleep(2000);
   }
   return { ok: false, hs: last ? last.hs : null, rank: last ? last.rank : null, waitedMs: Date.now() - t0, alerted: uploadAlertSeen };
+}
+
+// 网站那次上传失败时, 由 Node 用完全相同的 body 重发几次
+// (浏览器里那段 fetch 没有 catch, 被拦/500 就是静默失败; Node 不受 CORS 限制, 也能看到返回体)
+async function relayUpload(context) {
+  if (!lastUploadReq || !lastUploadReq.body) {
+    console.log('     (没抓到网站的上传请求体, 无法重发)');
+    return false;
+  }
+  let cookieHeader = '';
+  try {
+    const cks = await context.cookies('https://backend.2048verse.com');
+    cookieHeader = cks.map((c) => `${c.name}=${c.value}`).join('; ');
+  } catch { }
+  for (let i = 1; i <= 3; i++) {
+    try {
+      const res = await fetch(lastUploadReq.url, {
+        method: 'POST',
+        headers: {
+          'Content-Encoding': 'gzip', 'Content-Type': 'application/octet-stream',
+          Cookie: cookieHeader, 'User-Agent': 'Mozilla/5.0',
+        },
+        body: lastUploadReq.body,
+      });
+      const txt = (await res.text()).slice(0, 160).replace(/\s+/g, ' ');
+      console.log(`  📤 脚本重发上传 #${i}: HTTP ${res.status} ${txt}`);
+      setLiveStatus({ upload: `脚本重发 HTTP ${res.status}` });
+      if (res.ok) return true;
+    } catch (e) {
+      console.log(`  📤 脚本重发上传 #${i} 异常: ${e.message}`);
+    }
+    await sleep(1500 * i);
+  }
+  return false;
 }
 
 // 刷新页面让排名/HUD 显示最新数据
@@ -1070,11 +1112,34 @@ function scheduleSelfTestNav(page) {
   let page = browser.pages()[0] || await browser.newPage();
   page.setDefaultTimeout(30000);
 
+  // 记录成绩上传请求 —— 光看"最高分没变"无法区分"没上传"和"上传失败", 这里直接打出来
+  const logUpload = (p) => {
+    p.on('request', (req) => {
+      if (!/\/games\/upload/.test(req.url())) return;
+      try { lastUploadReq = { url: req.url(), body: req.postDataBuffer(), at: Date.now() }; } catch { }
+    });
+    p.on('response', (res) => {
+      if (!/\/games\/upload/.test(res.url())) return;
+      lastUploadStatus = res.status();
+      console.log(`  📤 网站上传成绩: HTTP ${res.status()}`);
+      setLiveStatus({ upload: `HTTP ${res.status()} @ ${new Date().toLocaleTimeString('zh-CN')}` });
+    });
+    p.on('requestfailed', (req) => {
+      if (!/\/games\/upload/.test(req.url())) return;
+      lastUploadStatus = 0;
+      console.log(`  📤 上传请求失败: ${(req.failure() || {}).errorText}`);
+      setLiveStatus({ upload: `失败 ${(req.failure() || {}).errorText}` });
+    });
+  };
+  logUpload(page);
+
   // 在任何页面脚本运行前禁用胜利弹窗 (对上下文内所有页面生效)
   await browser.addInitScript(() => {
     try {
       localStorage.setItem('winScreenDisabled', 'true');
       localStorage.setItem('confirmRestart', 'false');
+      // 注意: 千万别往 localStorage 写 username/token —— 网站一看到 localStorage.username
+      // 就认为这是旧版会话, 会清空并强制跳 /login (它现在把登录态放在 cookie 里)。
     } catch { }
   });
 
@@ -1098,13 +1163,22 @@ function scheduleSelfTestNav(page) {
   } else {
     const loginPage = await waitForLogin(browser, page);
     if (!loginPage) { console.log('浏览器已关闭或收到停止信号, 退出'); process.exit(0); }
-    if (loginPage !== page) console.log('ℹ 游戏已切换到新标签页');
+    if (loginPage !== page) { console.log('ℹ 游戏已切换到新标签页'); logUpload(loginPage); }
     page = loginPage;
     // 回到游戏页并等待棋盘
     if (!page.url().includes('/4x4')) {
       await page.goto(GAME_URL, { waitUntil: 'domcontentloaded' });
     }
     await page.waitForSelector('#board-4x4', { timeout: 15000 }).catch(() => { });
+  }
+
+  // 启动时确认账号 (成绩由网站自己在死局时上传, 这里只是把结果打出来便于排查)
+  const acc0 = await getAccount(page);
+  if (acc0) {
+    console.log(`  👤 登录账号: ${acc0}  (成绩由网站自分在死局时上传, 下面会记录上传请求与返回码)`);
+    setLiveStatus({ account: acc0 });
+  } else {
+    console.log('  ⚠ 未识别到登录账号 → 网站不会上传成绩 (游客局), 请检查 session.json / 登录态是否过期');
   }
 
   // 导出登录会话 (供服务器复用, 之后可 Ctrl+C)
@@ -1146,6 +1220,14 @@ function scheduleSelfTestNav(page) {
   while (gameNo < ARGS.games && !process.exitRequested && !browserDisconnected) {
     gameNo++;
     console.log(`\n━━━ 第 ${gameNo} 局 ━━━`);
+    // 开局前记下服务器侧最高分: 只有超过它, 排行榜才需要更新, 也才验证得了上传
+    let hsBefore = null;
+    if (acc0) {
+      const hb = await fetchServerHighScore(acc0);
+      if (hb) hsBefore = hb.hs;
+      console.log(`  开局前服务器最高分: ${hsBefore === null ? '(查询失败)' : fmt(hsBefore)}`);
+    }
+    uploadAlertSeen = false; lastUploadStatus = null; lastUploadReq = null;
     let result;
     try {
       result = await playOneGame(page, gameNo, stats);
@@ -1184,17 +1266,31 @@ function scheduleSelfTestNav(page) {
     const account = await getAccount(page);
     let uploadInfo = null;
     if (cap && account) {
-      console.log(`  等待网站成绩上传 (账号 ${account}, 本局 ${fmt(cap.score)})...`);
-      uploadInfo = await waitForUpload(account, cap.score, ARGS.uploadTimeout);
-      if (uploadInfo.ok) {
-        console.log(`  ✅ 上传成功: 服务器最高分 ${fmt(uploadInfo.hs)}` +
-          (uploadInfo.rank ? `, 当前排名 #${uploadInfo.rank}` : '') +
-          ` (等待 ${(uploadInfo.waitedMs / 1000).toFixed(0)}s)`);
+      // 只有"本局分数 > 开局前的服务器最高分"时, 排行榜才会有变化 —— 也只有这时才验证得了
+      const isRecord = hsBefore === null || cap.score > hsBefore;
+      console.log(`  等待网站成绩上传 (账号 ${account}, 本局 ${fmt(cap.score)}` +
+        (hsBefore !== null ? `, 开局前服务器最高分 ${fmt(hsBefore)}` : '') + ')...');
+      if (isRecord) {
+        uploadInfo = await waitForUpload(account, cap.score, ARGS.uploadTimeout);
+        if (!uploadInfo.ok) {
+          // 网站那次上传没落地: 先看返回码, 再由 Node 用同样的 body 重发
+          console.log(`  ⚠ 排行榜上还没出现本局分数 (网站上传请求返回: ${lastUploadStatus === null ? '没抓到' : 'HTTP ' + lastUploadStatus})`);
+          const relayed = await relayUpload(browser);
+          if (relayed) uploadInfo = await waitForUpload(account, cap.score, 30);
+        }
+        if (uploadInfo.ok) {
+          console.log(`  ✅ 新纪录已上传并刷新到排行榜: 服务器最高分 ${fmt(uploadInfo.hs)}` +
+            (uploadInfo.rank ? `, 排名 #${uploadInfo.rank}` : '') +
+            ` (等待 ${(uploadInfo.waitedMs / 1000).toFixed(0)}s)`);
+        } else {
+          console.log('  ❌ 新纪录未能上传! (排行榜上仍是 ' + (uploadInfo.hs === null ? '查询失败' : fmt(uploadInfo.hs)) + ')');
+          if (uploadInfo.alerted) console.log('     网站已弹出"记录上传失败"提示 → 该对局未被服务器接收');
+          console.log(`     本局数据与截图已存档 (results/), 可凭它到官方 Discord 申请手动补录; 分数 ${fmt(cap.score)} / 最大 ${cap.maxTile} / ${cap.moves} 步`);
+        }
       } else {
-        console.log('  ❌ 上传未确认!');
-        console.log(`     服务器最高分: ${uploadInfo.hs === null ? '查询失败(网络)' : fmt(uploadInfo.hs)} | 本局 ${fmt(cap.score)}`);
-        if (uploadInfo.alerted) console.log('     网站已弹出"记录上传失败"提示 → 该对局未被服务器接收');
-        console.log('     截图与数据已存档, 可凭截图到官方 Discord 申请手动补录');
+        console.log(`  ℹ 本局 ${fmt(cap.score)} 分 未超过服务器最高分 ${fmt(hsBefore)}, 排行榜无需更新 ` +
+          `(网站上传请求: ${lastUploadStatus === null ? '未触发' : 'HTTP ' + lastUploadStatus})`);
+        uploadInfo = { ok: true, notRecord: true, hs: hsBefore, rank: null };
       }
       // 刷新页面, 让排行榜/最高分显示最新数据
       const r = await refreshRanking(page, account);
