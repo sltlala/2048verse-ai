@@ -71,6 +71,13 @@ To appeal this ban, please contact 2048verse@narwhalkid.com.</div>
       容器日志里这类崩溃重复了 <b>626 次</b>（<code>致命错误: Cannot read properties of null</code>）。
       服务器、nginx、博客、DSH 都正常，只有这个面板受影响。
     </div>
+    <div class="muted" style="margin-top:8px;color:#9ef0a8">
+      ✅ 已修复（2026-10-03）：<br>
+      ① <code>fmt()</code> 不再是空值炸弹 —— 排行榜查询失败时不再抛异常退出（<code>fmt(null)</code> → <code>–</code>）<br>
+      ② 排行榜请求加了 10 秒超时，网络卡住不会再挂住启动流程<br>
+      ③ 新增封禁检测：识别到封禁会打印原文与申诉邮箱、<b>保持状态面板在线</b>、停止对局且进程不退出，
+      所以不会再出现"崩溃 → 重启 → 卡死 → 502"的循环
+    </div>
   </div>
 
   <div class="card">
@@ -80,9 +87,9 @@ To appeal this ban, please contact 2048verse@narwhalkid.com.</div>
       解封后账号与排行榜才会恢复。<br>
       ② <b>恢复实时面板</b>：先 <code>docker compose up -d</code>，再把 nginx 的 <code>location /</code>
       换回反代 <code>proxy_pass http://bot2048_panel;</code>（README 里有步骤）。<br>
-      注意：<b>封禁状态下重启也没用</b>，进程会再次卡在封禁页，面板依然起不来。
+      封禁状态下启动也<b>不会</b>再 502：面板会在线显示「⛔ 账号已被封禁（已停止对局）」。
     </div>
-    <pre>cd /root/2048bot &amp;&amp; docker compose up -d     # 启动（需先解封）</pre>
+    <pre>cd /root/2048bot &amp;&amp; docker compose up -d     # 启动（对局需先解封）</pre>
     <pre>cd /root/2048bot &amp;&amp; docker compose stop      # 停止</pre>
   </div>
 

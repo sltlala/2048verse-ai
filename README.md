@@ -781,6 +781,24 @@ certbot certonly --webroot -w /var/www/acme -d 2048.sltlala.top --non-interactiv
 docker compose up -d --build     # 重新构建并滚动重启, results/ 与登录态都保留
 ```
 
+**账号被网站封禁时的行为（2026-10-03 修复）**
+
+2048verse 的用户协议禁止使用 AI/外部工具。一旦被封，站点会弹
+「Your account has been banned… forbidden to use AI or other external tools」，
+并撤销登录 token、把账号从排行榜移除、分数归零（申诉邮箱在弹窗里，2026-10 时是 `2048verse@narwhalkid.com`）。
+
+脚本对此的处理：
+
+- **检测**：弹窗 / 页面文字 / `localStorage.error` 三处任一命中即判定封禁
+- **行为**：打印封禁原文 + 申诉邮箱 + 本机记录，然后**停止对局、保持状态面板在线、进程不退出**。
+  不退出很关键：`restart: unless-stopped` 下退出会被反复重启，而每次重启又卡在封禁页，
+  状态面板始终起不来 → **nginx 反代 502**。2026-10-03 那次"网址进不去"就是这么来的，
+  容器日志里同类崩溃累计 **626 次**。
+- **不再崩溃**：`fmt()` 改为空值安全（排行榜查不到时返回 `–`；原来 `n.toLocaleString()` 会直接抛
+  `Cannot read properties of null` 把进程打死），排行榜请求同时加了 10 秒超时。
+
+> 被封后脚本不做任何规避（换账号、伪造数据之类），也不会自动重试对局；想恢复只有申诉一条路。
+
 **成绩上传是怎么保证的**
 
 网站的成绩上传（死局时 `POST backend.2048verse.com/games/upload`）是**网站自己**发的，

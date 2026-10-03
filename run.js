@@ -912,6 +912,7 @@ let lastUploadReq = null;      // 网站发出的那次 /games/upload (url + 原
 let lastUploadStatus = null;   // 该请求的返回码
 let bestSeenOnServer = null;   // 我们在服务器排行榜上见过的最高分 (用来发现"上榜后又被删")
 let resumedFromRestart = false; // 当前这局是不是"容器重启后接着玩的"
+let bannedInfo = null;         // 网站提示"账号已被封禁"时的原文 (封号后不必再玩, 但要保持面板在线)
 
 async function getAccount(page) {
   return safeEval(page, () => {
@@ -930,13 +931,33 @@ async function fetchServerHighScore(account) {
   if (!account) return null;
   try {
     const url = `${API_BASE}/leaderboard/top?time=all&username=${encodeURIComponent(account)}&variant=4x4`;
-    const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    // 必须带超时: 网络卡住时 fetch 会一直挂着, 启动流程就会永远停在这里 (实测封号后就这样卡死过)
+    const res = await fetch(url, { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(10000) });
     if (!res.ok) return null;
     const j = await res.json();
     if (typeof j.hs === 'number') return { hs: j.hs, rank: j.rank ?? null };
     const mine = (j.leaderboard || []).find(e => e.username === account);
     return mine ? { hs: mine.score, rank: j.rank ?? null } : { hs: null, rank: j.rank ?? null };
   } catch { return null; }
+}
+
+// 封禁检测: 弹窗可能被漏掉, 所以再从页面文字 / localStorage.error 兜一层
+async function detectBan(page) {
+  if (bannedInfo) return bannedInfo;
+  const info = await safeEval(page, () => {
+    try {
+      const ls = localStorage.getItem('error');
+      const t = (document.body && document.body.innerText) || '';
+      if (/account has been banned|forbidden to use AI/i.test(t)) {
+        const m = t.match(/[^\n]*has been banned[^\n]*(?:\n[^\n]*){0,3}/i);
+        return (m ? m[0] : t).slice(0, 300);
+      }
+      if (ls && /banned|forbidden to use AI/i.test(ls)) return ls.slice(0, 300);
+      return null;
+    } catch { return null; }
+  });
+  if (info) bannedInfo = info;
+  return bannedInfo;
 }
 
 // 等上传落地; 返回 {ok, hs, rank, waitedMs, alerted}
@@ -1123,7 +1144,13 @@ function scheduleSelfTestNav(page) {
   // 弹窗处理: 不再静默吞掉 —— 网站上传失败时会弹 alert, 必须识别出来
   browser.on('dialog', async (d) => {
     const msg = d.message() || '';
-    if (/error logging your game|error.*log.*game/i.test(msg)) {
+    if (/account has been banned|forbidden to use AI|has been banned/i.test(msg)) {
+      bannedInfo = msg;
+      console.log('  ⛔ 网站提示账号已被封禁:');
+      msg.split('\n').filter(Boolean).forEach((l) => console.log('     ' + l.trim()));
+      console.log('     → 机器人无法继续对局; 会保持状态面板在线, 不再反复重启');
+      setLiveStatus({ status: '⛔ 账号已被封禁', banned: true, upload: '账号已封禁' });
+    } else if (/error logging your game|error.*log.*game/i.test(msg)) {
       uploadAlertSeen = true;
       console.log('  ⚠️ 网站提示"记录上传失败": ' + msg.slice(0, 160));
     } else if (msg.length < 200) {
@@ -1249,6 +1276,35 @@ function scheduleSelfTestNav(page) {
   if (ARGS.shotInterval > 0) startPeriodicShot(page, ARGS.shotInterval);
   setLiveStatus({ status: '准备开始', gameNo: 0, best: localBest, bestTileLocal: localTile });
 
+  // 封禁检测: 封号后继续玩没有意义; 而且老代码会在"排行榜查询失败"时崩溃(fmt(null))
+  // 被 Docker 反复重启, 状态面板始终起不来 → nginx 反代拿不到上游 → 502。
+  // 这里改为: 面板照常在线 + 停止对局 + 进程不退出。
+  if (await detectBan(page)) {
+    const raw = String(bannedInfo).replace(/\s+/g, ' ').trim();
+    const mail = raw.match(/[\w.+-]+@[\w.-]+\.\w+/);
+    console.log('\n' + '═'.repeat(56));
+    console.log('⛔ 账号已被 2048verse 封禁, 机器人停止对局');
+    console.log('   网站原文: ' + raw.slice(0, 240));
+    if (mail) console.log('   申诉邮箱: ' + mail[0]);
+    console.log(`   本机记录不受影响: 脚本记录最佳 ${fmt(localBest)} (最大方块 ${fmt(localTile)}, 历史 ${rb.games} 局)`);
+    console.log('   数据与截图保留在 results/; 状态面板保持在线, 进程不退出(避免容器反复重启)');
+    console.log('═'.repeat(56) + '\n');
+    setLiveStatus({
+      status: '⛔ 账号已被封禁 (已停止对局)', banned: true,
+      best: localBest, gameNo: 0, upload: '账号已封禁',
+    });
+    const tBan = Date.now();
+    let n = 0;
+    while (!process.exitRequested && !browserDisconnected) {
+      await sleep(60000);
+      n++;
+      if (n % 10 === 0) {
+        console.log(`  ⛔ 仍处于封禁状态, 已停止对局 ${Math.round((Date.now() - tBan) / 60000)} 分钟 (面板在线)`);
+      }
+    }
+    process.exit(0);
+  }
+
   // 这局是不是"上次容器重启时正在进行的对局"? 网站会把局面存在 localStorage 里,
   // 分数>0 就说明是接着玩的。记进 results.jsonl, 用来验证"被网站剔除的对局是否都是中断过的"。
   const stored = await safeEval(page, () => {
@@ -1274,6 +1330,12 @@ function scheduleSelfTestNav(page) {
   // 游戏主循环 (任何一局的异常都不退出, 换页/重试)
   let gameNo = 0, consecutiveErrors = 0, completedGames = 0;
   while (gameNo < ARGS.games && !process.exitRequested && !browserDisconnected) {
+    // 中途被网站封禁: 立刻停下 (别在死棋盘上瞎按, 也别再尝试上传)
+    if (await detectBan(page)) {
+      console.log('⛔ 检测到账号已被封禁, 停止对局 (面板保持在线)');
+      setLiveStatus({ status: '⛔ 账号已被封禁 (已停止对局)', banned: true });
+      break;
+    }
     gameNo++;
     console.log(`\n━━━ 第 ${gameNo} 局 ━━━`);
     // 开局前记下服务器侧最高分: 只有超过它, 排行榜才需要更新, 也才验证得了上传
