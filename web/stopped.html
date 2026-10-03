@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>2048 机器人 · 已停止</title>
+<title>2048 机器人 · 账号已封禁</title>
 <style>
  body{margin:0;background:#14161c;color:#e8ecf5;font:15px/1.65 'Segoe UI',system-ui,-apple-system,sans-serif;-webkit-text-size-adjust:100%}
  .wrap{max-width:900px;margin:0 auto;padding:16px 14px calc(20px + env(safe-area-inset-bottom))}
@@ -13,57 +13,77 @@
  .dot{width:9px;height:9px;border-radius:50%;background:#ff6b6b;box-shadow:0 0 8px #ff6b6b}
  .muted{color:#93a0b8;font-size:12.5px}
  .card{background:#1b1e26;border:1px solid rgba(255,255,255,.07);border-radius:12px;padding:14px 16px;margin:12px 0}
+ .warn{background:#241a1a;border-color:#5a2f2f}
  .kv{display:flex;justify-content:space-between;gap:10px;padding:3px 0}
  .kv span{color:#aab6cc}
  .kv b{color:#ffd76e;text-align:right}
  .big{font-size:22px}
+ .ban{background:#0f1116;border-left:3px solid #ff6b6b;border-radius:6px;padding:10px 12px;margin:8px 0;
+      color:#ffd0d0;font-size:13.5px;white-space:pre-wrap;word-break:break-word}
  .shot{display:block;width:100%;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:#000}
  pre{background:#0f1116;border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:10px 12px;
      overflow-x:auto;color:#9ef0a8;font-size:13px;margin:8px 0 0}
  h2{font-size:14px;margin:0 0 8px;color:#cbd5e6}
+ code{color:#9ef0a8}
  .foot{text-align:center;color:#6f7c93;font-size:12px;margin-top:14px}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>🤖 2048 机器人</h1>
-  <div><span class="badge"><span class="dot"></span>已停止</span></div>
-  <div class="muted" style="margin-top:8px">停止时间：2026-09-27 15:06:01（北京时间）</div>
+  <div><span class="badge"><span class="dot"></span>账号已封禁 · 已停止</span></div>
+  <div class="muted" style="margin-top:8px">停止时间：2026-10-03 22:30（北京时间）</div>
+
+  <div class="card warn">
+    <h2>⚠️ 网站提示（2048verse）</h2>
+    <div class="ban">Your account has been banned.
+
+Ban reason: forbidden to use AI or other external tools on verse
+
+To appeal this ban, please contact 2048verse@narwhalkid.com.</div>
+    <div class="kv"><span>账号</span><b>sltlala</b></div>
+    <div class="muted" style="margin-top:4px">后果：已移出排行榜 · 分数归零 · 登录 token 已撤销</div>
+    <div class="muted" style="margin-top:6px">申诉邮箱：<b style="color:#ffd76e">2048verse@narwhalkid.com</b></div>
+  </div>
 
   <div class="card">
-    <h2>成绩记录</h2>
-    <div class="kv"><span>脚本记录最佳</span><b class="big">743,224</b></div>
+    <h2>成绩记录（本机存档，与网站无关）</h2>
+    <div class="kv"><span>脚本记录最佳</span><b class="big">820,024</b></div>
     <div class="kv"><span>最大方块</span><b>32,768</b></div>
-    <div class="kv"><span>该局步数 / 用时</span><b>26,059 步 / 104 分钟</b></div>
-    <div class="kv"><span>创造时间</span><b>2026-09-27 11:45</b></div>
-    <div class="kv"><span>历史对局总数</span><b>14 局</b></div>
-    <div class="kv"><span>最后一局完成</span><b>223,804 分 / 16,384</b></div>
-    <div class="kv"><span>网站排行榜</span><b>#473 · 177,336</b></div>
-    <div class="muted" style="margin-top:8px">
-      注：「脚本记录最佳」取自本机持久化的 results.jsonl（网站删不掉）；
-      「网站排行榜」是停止时从 2048verse.com 后端查到的名次，两者可能不一致。
+    <div class="kv"><span>该局步数</span><b>28,875 步</b></div>
+    <div class="kv"><span>创造时间</span><b>2026-10-02 01:35</b></div>
+    <div class="kv"><span>历史对局</span><b>90 局（80 局网站曾确认接收）</b></div>
+    <div class="muted" style="margin-top:6px">
+      取自服务器持久化的 <code>results.jsonl</code> + 每局终局截图，共 2 MB，网站删不掉。
     </div>
   </div>
 
   <div class="card">
-    <h2>停止时的对局（未打完，已保存）</h2>
-    <div class="kv"><span>分数 / 最大方块</span><b>78,196 / 4,096</b></div>
-    <div class="kv"><span>步数 / 空格</span><b>3,575 步 / 1 格</b></div>
-    <div class="muted" style="margin-top:8px">
-      对局状态保存在持久化 profile 里，重新启动容器会<b style="color:#ffd76e">接着这一局</b>继续玩，不会丢。
+    <h2>最佳那局的终局画面</h2>
+    <img class="shot" src="best.png" alt="820,024 那局的终局截图">
+  </div>
+
+  <div class="card">
+    <h2>之前为什么打不开（502）</h2>
+    <div class="muted">
+      机器人进程卡在网站的「账号已被封禁」提示页上，始终没走到启动状态面板那一步，
+      所以 nginx 反代的上游 <code>127.0.0.1:8765</code> 没有服务可连 → <b>502 Bad Gateway</b>。
+      容器日志里这类崩溃重复了 <b>626 次</b>（<code>致命错误: Cannot read properties of null</code>）。
+      服务器、nginx、博客、DSH 都正常，只有这个面板受影响。
     </div>
   </div>
 
   <div class="card">
-    <h2>最后一张实时截图</h2>
-    <img class="shot" src="last.png" alt="停止前的最后一张截图">
-  </div>
-
-  <div class="card">
-    <h2>重新启动</h2>
-    <pre>cd /root/2048bot &amp;&amp; docker compose up -d</pre>
-    <div class="muted" style="margin-top:8px">启动后实时面板会回到 <code>https://2048.sltlala.top/</code>（这个静态页会被替换掉）。</div>
-    <pre>cd /root/2048bot &amp;&amp; docker compose stop   # 再次停止</pre>
+    <h2>想恢复使用</h2>
+    <div class="muted">
+      ① <b>申诉</b>：发邮件到 <code>2048verse@narwhalkid.com</code>（说明情况、承诺不再使用外部工具）。
+      解封后账号与排行榜才会恢复。<br>
+      ② <b>恢复实时面板</b>：先 <code>docker compose up -d</code>，再把 nginx 的 <code>location /</code>
+      换回反代 <code>proxy_pass http://bot2048_panel;</code>（README 里有步骤）。<br>
+      注意：<b>封禁状态下重启也没用</b>，进程会再次卡在封禁页，面板依然起不来。
+    </div>
+    <pre>cd /root/2048bot &amp;&amp; docker compose up -d     # 启动（需先解封）</pre>
+    <pre>cd /root/2048bot &amp;&amp; docker compose stop      # 停止</pre>
   </div>
 
   <div class="foot">2048verse AI · 服务器 121.40.44.127</div>
